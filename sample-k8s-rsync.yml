@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+    name: rsync-1716172152-519385-6
+spec:
+    template:
+        spec:
+            containers:
+            - name: rsync-1716172152-519385-6
+              image: fra.ocir.io/fsssolutions/rclone-rsync:latest
+              env:
+              - name: FPART_JOBCOMMAND
+                value: /bin/sh -c '/usr/bin/rsync -lptgoD -v --numeric-ids -r --files-from="/data/fpsync/parts/1716172152-519385/part.6" "/data/src//" "/data/dst/"' 1>/data/fpsync/log/1716172152-519385/6.stdout 2>/data/fpsync/log/1716172152-519385/6.stderr
+              - name: BASE64_RCLONE_CONFIG
+                value: ""
+              volumeMounts:
+              - name: lustre-volume
+                mountPath: "/data"
+            restartPolicy: Never
+            volumes:
+            - name: lustre-volume
+              persistentVolumeClaim:
+                claimName: lustre-pvc

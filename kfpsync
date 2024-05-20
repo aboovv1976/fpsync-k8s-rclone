@@ -1,0 +1,1419 @@
+#!/bin/sh
+
+# Copyright (c) 2014-2021 Ganael LAPLANCHE <ganael.laplanche@martymac.org>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHORS AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# This script is a simple wrapper showing how fpart can be used to migrate data.
+# It uses fpart and a copy tool to spawn multiple instances to migrate data from
+# src_dir/ to dst_url/. Jobs can execute either locally or over SSH.
+
+FPSYNC_VERSION="1.4.0"
+
+########## Default values for options
+
+# External tool used to copy files
+OPT_TOOL_NAME="rsync"
+# Number of sync jobs to run in parallel ("workers", -n)
+OPT_JOBS=2
+# Same, but autodetected
+#OPT_JOBS=$(sysctl -n hw.ncpu)  # On FreeBSD
+#OPT_JOBS=$(nproc)              # On Linux
+# Number of sync jobs from resumed run, read from the 'info' file
+OPT_RJOBS=
+# Maximum files or directories per sync job (-f)
+OPT_FPMAXPARTFILES="2000"
+# Maximum bytes per sync job (-s)
+# Don't need a default partition size so that the partition size is not always limited to default OPT_FPMAXPARTSIZE
+# If a OPT_FPMAXPARTSIZE is needed, specify it in the command line using -s option
+# OPT_FPMAXPARTSIZE="$((4 * 1024 * 1024 * 1024))" # 4 GB
+# Work on a per-directory basis (disabled by default)
+OPT_DIRSONLY=""
+# SSH workers (execute jobs locally if not defined, -w)
+OPT_WRKRS=""
+# Kubernetes worker enabled
+OPT_K8S_IMAGE=""
+# Fpart shared dir (must be shared amongst all workers, -d)
+OPT_FPSHDIR=""
+# Temporary dir (local, used for queue management, -t)
+OPT_TMPDIR="/tmp/fpsync"
+# E-mail report option (-M)
+OPT_MAIL=""
+# Prepare mode (-p)
+OPT_PREPARERUN=""
+# List runs (-l)
+OPT_LISTRUNS=""
+# Run ID for resume mode (-r)
+OPT_RUNID=""
+# Replay mode (-R)
+OPT_REPLAYRUN=""
+# Archive run (-a)
+OPT_ARCHIVERUN=""
+# Delete run (-D)
+OPT_DELETERUN=""
+# User-settable tool options (-o)
+OPT_TOOL=""
+# Fpart options (-O)
+OPT_FPART="-x|.zfs|-x|.snapshot*|-x|.ckpt"
+# Sudo mode (-S)
+OPT_SUDO=""
+# Verbose mode (-v)
+OPT_VERBOSE="0"
+# Source directory
+OPT_SRCDIR=""
+# Destination directory
+OPT_DSTURL=""
+
+########## Various functions
+
+#set -o errexit
+#set -o nounset
+LC_ALL=C
+
+# Print help
+usage () {
+    cat << EOF
+fpsync v${FPSYNC_VERSION} - Sync directories in parallel using fpart
+Copyright (c) 2014-2021 Ganael LAPLANCHE <ganael.laplanche@martymac.org>
+WWW: http://contribs.martymac.org
+Usage: $0 [-p] [OPTIONS...] src_dir/ dst_url/
+       $0 -l
+       $0 -r runid [-R] [OPTIONS...]
+       $0 -a runid
+       $0 -D runid
+
+COMMON OPTIONS:
+  -t /dir/    set fpsync temp dir to </dir/> (absolute path)
+  -d /dir/    set fpsync shared dir to </dir/> (absolute path)
+              This option is mandatory when using SSH workers.
+  -M mailaddr send an e-mail to mailaddr after a run. Multiple
+              -space-separated- addresses can be specified.
+  -v          verbose mode (default: quiet)
+              This option can be be specified several times to
+              increase verbosity level.
+  -h          this help
+
+SYNCHRONIZATION OPTIONS:
+  -m tool     external copy tool to use: $(tool_print_supported)
+              (default: 'rsync')
+  -f y        transfer at most <y> files or directories per sync job
+  -s z        transfer at most <z> bytes per sync job
+  -E          work on a per-directory basis ('rsync' tool only)
+              (WARNING!!! Enables rsync(1)'s --delete option!)
+  -o options  override default copy tool options with <options>
+              See fpsync(1) for more details.
+  -O options  override default fpart options with pipe-separated <options>
+              See fpsync(1) for more details.
+  -S          use sudo for filesystem crawling and synchronizations
+  src_dir/    source directory (absolute path)
+  dst_url/    destination directory (or URL, when using 'rsync' tool)
+
+JOB HANDLING AND DISPATCHING OPTIONS:
+  -n x        start <x> concurrent sync jobs per run
+  -w wrks     space-separated list of SSH workers
+              e.g.: -w 'login@host1 login@host2 login@host3'
+              or:   -w 'login@host1' -w 'login@host2' -w 'login@host3'
+              Jobs are executed locally if not specified (default).
+
+RUN HANDLING OPTIONS:
+  -p          prepare mode: prepare target(s) and create a resumable
+              run by crawling filesystem but do not actually start
+              synchronization jobs.
+  -l          list previous runs and their status.
+  -r runid    resume run <runid>
+              (options -m, -f, -s, -E, -o, -O, -S, /src_dir/ and
+              /dst_url/ are ignored when resuming a previous run)
+  -R          replay mode (needs option -r): re-synchronize all
+              partitions from run <runid> instead of working on
+              remaining ones only.
+  -a runid    archive run <runid> to temp dir
+  -D runid    delete run <runid>
+
+See fpsync(1) for more details.
+EOF
+}
+
+# Print a message to stdout and exit with normal exit code
+end_ok () {
+    [ -n "$1" ] && echo "$1"
+    exit 0
+}
+
+# Print a message to stderr and exit with error code 1
+end_die () {
+    [ -n "$1" ] && echo "$1" 1>&2
+    exit 1
+}
+
+# Print (to stdout) and log a message
+# $1 = level (0 = quiet, 1 = verbose, >=2 more verbose)
+# $2 = message to log
+echo_log () {
+#    local _ts=$(date '+%s')
+    local _ts=$(date)
+    is_num "$1" && [ ${OPT_VERBOSE} -ge $1 ] && [ -n "$2" ] && \
+        echo "${_ts} $2"
+    [ -n "$2" ] && \
+        echo "${_ts} $2" >> "${FPART_LOGFILE}"
+}
+
+# Check if $1 is an absolute path
+is_abs_path() {
+    echo "$1" | grep -qE '^/'
+}
+
+# Check if $1 is a valid rsync URL
+# Cf. rsync(1) :
+#   SSH:   [USER@]HOST:DEST
+#   Rsync: [USER@]HOST::DEST
+#   Rsync: rsync://[USER@]HOST[:PORT]/DEST
+# Simplified as: "anything but slash" followed by at least one ":"
+is_remote_path() {
+    echo "$1" | grep -qE '^[^/]+:'
+}
+
+# Check if $1 is a number
+is_num () {
+    echo "$1" | grep -qE '^[0-9]+$'
+}
+
+# Check if $1 is an acceptable size argument
+# - must be greater than 0
+# - may contain 'kKmMgGtTpP' suffix
+is_size () {
+    echo "$1" | grep -qE '^0*[1-9][0-9]*[kKmMgGtTpP]?$'
+}
+
+# Check if $1 contains (at least) a valid e-mail address
+is_mailaddr () {
+    echo "$1" | grep -qE '^[a-zA-Z0-9+._-]+@[a-zA-Z0-9-]+\.'
+}
+
+# Check if $1 is a valid run ID
+is_runid () {
+    echo "$1" | grep -qE '^[0-9]+-[0-9]+$'
+}
+
+########## Tool handling
+
+# Chek if a tool is supported
+# $1 = tool name
+tool_is_supported () {
+    echo "$1" | grep -qE '^(rsync|cpio|tar|tarify|rclone)$'
+}
+
+# Print supported tools in a friendly manner
+tool_print_supported () {
+    echo "'rsync', 'cpio', 'tar', rclone or 'tarify'"
+}
+
+# Check if a tool supports a URL as sync target
+# $1 = tool name
+tool_supports_urls () {
+    echo "$1" | grep -q '^rsync$' || echo "$1" | grep -q '^rclone$'
+}
+
+# Check if a tool supports directory-only mode
+# (requires the ability to sync a single-level directory tree)
+# $1 = tool name
+tool_supports_dirsonly () {
+    echo "$1" | grep -q '^rsync$'
+}
+
+# Get default tool-related options
+# $1 = tool name
+tool_get_base_opts () {
+    [ "$1" = "rsync" ] &&
+        printf '%s\n' '-lptgoD -v --numeric-ids'
+}
+
+# Get mode-specific complementary tool-related options
+# $1 = tool name
+# $2 = dirs only mode (if string not empty)
+tool_get_tool_mode_opts () {
+    if [ -z "$2" ]
+    then
+        # File-based mode
+        case "$1" in
+        "rsync")
+	        # Recursive rsync(1)
+	        printf '%s\n' '-r'
+            ;;
+        "cpio")
+	        printf '%s\n' '-pdm'
+            ;;
+        "tar"|"tarify")
+	        # Update directories themselves but do not recurse
+	        printf '%s\n' '--no-recursion'
+            ;;
+        *)
+            ;;
+        esac
+    else
+        # Dirs-only mode
+        case "$1" in
+        "rsync")
+	        # Single-depth rsync(1)
+	        # Postpone deletion to limit impacts of a user interruption
+	        printf '%s\n' '-d --relative --delete --delete-after'
+            ;;
+        *)
+            ;;
+        esac
+    fi
+}
+
+# Get mode-specific fpart options
+# $1 = tool name
+# $2 = dirs only mode (if string not empty)
+tool_get_fpart_mode_opts () {
+    if [ -z "$2" ]
+    then
+        # File-based mode
+        case "$1" in
+        "rsync")
+	        printf '%s\n' '-zz'
+            ;;
+        "cpio"|"tar"|"tarify")
+            # We want empty directory entries with those tools
+            # to re-apply correct metadata
+	        printf '%s\n' '-zzz'
+            ;;
+        *)
+            ;;
+        esac
+    else
+        # Dirs-only mode
+        case "$1" in
+        "rsync")
+	        # We do *not* want fpart option -zz in dirs-only mode because
+	        # un-readable directories will be created when sync'ing the parent.
+	        printf '%s\n' '-E'
+            ;;
+        *)
+            ;;
+        esac
+    fi
+}
+
+# Init tool-specific fpart hooks (black magic is here !)
+# $1 = tool name
+# XXX That function works on global variable to avoid too many escape characters
+# when returning values through stdout
+tool_init_fpart_job_command () {
+    case "$1" in
+    "rsync")
+        FPART_JOBCOMMAND="/bin/sh -c '${SUDO} ${TOOL_BIN} ${OPT_TOOL} \
+            ${TOOL_MODEOPTS} --files-from=\\\"\${FPART_PARTFILENAME}\\\" \
+            \\\"${OPT_SRCDIR}/\\\" \
+            \\\"${OPT_DSTURL}/\\\"' \
+            1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
+            2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
+        ;;
+    "rclone")
+	rclone_dst=$(echo ${OPT_DSTURL} |cut -f1 -d:)
+	rclone_src=$(echo ${OPT_SRCDIR} | grep ":")
+	[ -n "${rclone_src}" ] && end_die "rclone is not supported from source ${rclone_src}"
+	[ "${rclone_dst}" = "${OPT_DSTURL}" ] && end_die "rclone is not supported to destination ${rclone_dst}"
+        rclone_config="$HOME/.config/rclone/rclone.conf"
+        if [ ! -f "$rclone_config" ]
+        then
+                    end_die "rclone configuratin file $rclone_config is missing"
+        fi
+	if ! grep "\[ *$rclone_dst *\]" $rclone_config
+        then
+            end_die "$rclone_config file is missing source anchor $rclone_dst"
+        fi
+	BASE64_RCLONE_CONFIG=$(base64 -w 0 $rclone_config)
+        # With rclone, use the / as the source because the FPART partition file contains absolute paths.
+        FPART_JOBCOMMAND="/bin/sh -c '${SUDO} ${TOOL_BIN} ${OPT_TOOL} \
+            ${TOOL_MODEOPTS} --files-from=\\\"\${FPART_PARTFILENAME}\\\" copy \
+            \\\"/\\\" \
+            \\\"${OPT_DSTURL}/\\\"' \
+            1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
+            2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
+        ;;
+    "cpio")
+        # XXX Warning: -0 and --quiet are non-standard
+        # (not supported on Solaris), see:
+        # http://pubs.opengroup.org/onlinepubs/7908799/xcu/cpio.html
+        # XXX Exec whole shell cmd as root, because we need to cwd first
+        FPART_JOBCOMMAND="${SUDO} /bin/sh -c 'cd \\\"${OPT_SRCDIR}/\\\" && \
+            cat \\\"\${FPART_PARTFILENAME}\\\" | \
+            ${TOOL_BIN} ${OPT_TOOL} -0 --quiet ${TOOL_MODEOPTS} \
+            \\\"${OPT_DSTURL}/\\\"' \
+            1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
+            2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
+        ;;
+    "tar")
+        FPART_JOBCOMMAND="/bin/sh -c '${SUDO} ${TOOL_BIN} cf - \
+            ${OPT_TOOL} -C \\\"${OPT_SRCDIR}/\\\" ${TOOL_MODEOPTS} \
+            --null -T \\\"\${FPART_PARTFILENAME}\\\" | \
+            ${SUDO} ${TOOL_BIN} xpf - \
+            ${OPT_TOOL} -C \\\"${OPT_DSTURL}/\\\"' \
+            1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
+            2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
+        ;;
+    "tarify")
+        FPART_JOBCOMMAND="/bin/sh -c '${SUDO} ${TOOL_BIN} c \
+            -f \\\"${OPT_DSTURL}/\${FPART_PARTNUMBER}.tar\\\" \
+            ${OPT_TOOL} -C \\\"${OPT_SRCDIR}/\\\" ${TOOL_MODEOPTS} \
+            --null -T \\\"\${FPART_PARTFILENAME}\\\"' \
+            1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
+            2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
+        ;;
+    *)
+        ;;
+    esac
+}
+
+# Check if $2 contains invalid options regarding tool $1
+# $1 = tool name
+# $2 = tool options
+tool_uses_forbidden_option () {
+    [ "$1" = "rsync" ] && \
+        printf '%s\n' "$2" | grep -q -- '--delete'
+}
+
+########## Options handling
+
+# Parse user options and initialize OPT_* global variables
+parse_opts () {
+    local opt OPTARG OPTIND
+
+    while getopts "m:n:f:s:EKw:d:t:M:plr:Ra:D:o:O:Svh" opt
+    do
+        case "${opt}" in
+        "K")
+            OPT_K8S_IMAGE="fra.ocir.io/fsssolutions/rclone-rsync:latest"
+            kubectl version >/dev/null 2>&1
+            if [ "$?" -ne "0" ]
+            then
+                end_die "kubectl is not working"
+            fi
+            cnt=$(kubectl get nodes --no-headers 2>/dev/null| wc -l)
+            if [ "$cnt" -lt "1" ]
+            then
+                end_die "There are not enough worker nodes available."
+	    fi
+            ;;
+        "m")
+            if tool_is_supported "${OPTARG}"
+            then
+                OPT_TOOL_NAME=${OPTARG}
+            else
+                end_die "Unsupported tool, please specify $(tool_print_supported)"
+            fi
+            ;;
+        "n")
+            if is_num "${OPTARG}" && [ ${OPTARG} -ge 1 ]
+            then
+                OPT_JOBS=${OPTARG}
+            else
+                end_die "Option -n expects a numeric value >= 1"
+            fi
+            ;;
+        "f")
+            if is_num "${OPTARG}" && [ ${OPTARG} -ge 0 ]
+            then
+                OPT_FPMAXPARTFILES=${OPTARG}
+            else
+                end_die "Option -f expects a numeric value >= 0"
+            fi
+            ;;
+        "s")
+            if { is_num "${OPTARG}" && [ ${OPTARG} -ge 0 ] ;} || is_size "${OPTARG}"
+            then
+                OPT_FPMAXPARTSIZE=${OPTARG}
+            else
+                end_die "Option -s expects a numeric value >= 0"
+            fi
+            ;;
+        "E")
+            OPT_DIRSONLY="yes"
+            ;;
+        "w")
+            if [ -n "${OPTARG}" ]
+            then
+                OPT_WRKRS="${OPT_WRKRS} ${OPTARG}"
+            else
+                end_die "Invalid workers list supplied"
+            fi
+            ;;
+        "d")
+            if is_abs_path "${OPTARG}"
+            then
+                OPT_FPSHDIR="${OPTARG}"
+            else
+                end_die "Please supply an absolute path for shared dir"
+            fi
+            ;;
+        "t")
+            if is_abs_path "${OPTARG}"
+            then
+                OPT_TMPDIR="${OPTARG}"
+            else
+                end_die "Please supply an absolute path for temp dir"
+            fi
+            ;;
+        "M")
+            if [ -n "${OPTARG}" ] && is_mailaddr "${OPTARG}"
+            then
+                OPT_MAIL="${OPTARG}"
+            else
+                end_die "Please supply a valid e-mail address"
+            fi
+            ;;
+        "p")
+            OPT_PREPARERUN="yes"
+            ;;
+        "l")
+            OPT_LISTRUNS="yes"
+            ;;
+        "r")
+            if [ -n "${OPTARG}" ] && is_runid "${OPTARG}"
+            then
+                OPT_RUNID="${OPTARG}"
+            else
+                end_die "Invalid run ID supplied"
+            fi
+            ;;
+        "R")
+            OPT_REPLAYRUN="yes"
+            ;;
+        "a")
+            if [ -n "${OPTARG}" ] && is_runid "${OPTARG}"
+            then
+                OPT_ARCHIVERUN="${OPTARG}"
+            else
+                end_die "Invalid run ID supplied"
+            fi
+            ;;
+        "D")
+            if [ -n "${OPTARG}" ] && is_runid "${OPTARG}"
+            then
+                OPT_DELETERUN="${OPTARG}"
+            else
+                end_die "Invalid run ID supplied"
+            fi
+            ;;
+        "o")
+            if [ -n "${OPTARG}" ]
+            then
+                OPT_TOOL="${OPTARG}"
+            else
+                end_die "Invalid tool options supplied"
+            fi
+            ;;
+        "O")
+            if [ -n "${OPTARG}" ]
+            then
+                OPT_FPART="${OPTARG}"
+            else
+                end_die "Invalid fpart options supplied"
+            fi
+            ;;
+        "S")
+            OPT_SUDO="yes"
+            ;;
+        "v")
+            OPT_VERBOSE="$((${OPT_VERBOSE} + 1))"
+            ;;
+        "h")
+            usage
+            end_ok
+            ;;
+        *)
+            usage
+            end_die "Invalid option specified"
+            ;;
+        esac
+    done
+    shift $((${OPTIND} - 1))
+
+    # Validate OPT_FPSHDIR (shared directory)
+    if [ -z "${OPT_WRKRS}" ]
+    then
+        # For local jobs, set shared directory to temporary directory
+        [ -z "${OPT_FPSHDIR}" ] && \
+            OPT_FPSHDIR="${OPT_TMPDIR}"
+    else
+        # For remote ones, specifying a shared directory is mandatory
+        [ -z "${OPT_FPSHDIR}" ] && \
+            end_die "Please supply a shared dir when specifying workers"
+    fi
+
+    # Run handling constraints
+    _err_msg="Please specify only a single option from: -p, -l -r, -a or -D"
+    [ -n "${OPT_PREPARERUN}" ] && \
+        { [ -n "${OPT_LISTRUNS}" ] || \
+          [ -n "${OPT_RUNID}" ] || \
+          [ -n "${OPT_ARCHIVERUN}" ] || \
+          [ -n "${OPT_DELETERUN}" ] ;} && \
+            end_die "${_err_msg}"
+    [ -n "${OPT_LISTRUNS}" ] && \
+        { [ -n "${OPT_RUNID}" ] || \
+          [ -n "${OPT_ARCHIVERUN}" ] || \
+          [ -n "${OPT_DELETERUN}" ] ;} && \
+            end_die "${_err_msg}"
+    [ -n "${OPT_RUNID}" ] && \
+        { [ -n "${OPT_ARCHIVERUN}" ] || \
+          [ -n "${OPT_DELETERUN}" ] ;} && \
+            end_die "${_err_msg}"
+    [ -n "${OPT_ARCHIVERUN}" ] && \
+        [ -n "${OPT_DELETERUN}" ] && \
+        end_die "${_err_msg}"
+    _err_msg=
+
+    [ -n "${OPT_REPLAYRUN}" ] && [ -z "${OPT_RUNID}" ] && \
+        end_die "Replay (-R) option can only be used with resume (-r) option"
+
+    # Validate partitions' constraints
+    if is_num "${OPT_FPMAXPARTFILES}" && [ ${OPT_FPMAXPARTFILES} -eq 0 ] && \
+        is_num "${OPT_FPMAXPARTSIZE}" && [ ${OPT_FPMAXPARTSIZE} -eq 0 ]
+    then
+        end_die "Please specify a least a file (-f) or size (-s) limit for partitions"
+    fi
+
+    # Check for src_dir and dst_url presence and validity
+    if [ -z "${OPT_RUNID}" ] && [ -z "${OPT_LISTRUNS}" ] && \
+        [ -z "${OPT_ARCHIVERUN}" ] && [ -z "${OPT_DELETERUN}" ]
+    then
+        # Check src dir, must be an absolute path
+        if is_abs_path "$1"
+        then
+            OPT_SRCDIR="$1"
+        else
+            usage
+            end_die "Please supply an absolute path for src_dir/ :$1"
+        fi
+        # Check dst_url, must be either an absolute path or a URL
+        if is_abs_path "$2" || is_remote_path "$2"
+        then
+            is_remote_path "$2" && ! tool_supports_urls "${OPT_TOOL_NAME}" && \
+                end_die "URLs are not supported when using ${OPT_TOOL_NAME}"
+            OPT_DSTURL="$2"
+        else
+            usage
+            if tool_supports_urls "${OPT_TOOL_NAME}"
+            then
+                end_die "Please supply either an absolute path or a rsync URL for dst_url/"
+            else
+                end_die "Please supply an absolute path for dst_url/"
+            fi
+        fi
+    fi
+
+    # Handle tool-related options
+    if [ "${OPT_DIRSONLY}" = "yes" ] && ! tool_supports_dirsonly "${OPT_TOOL_NAME}"
+    then
+        end_die "Option -E is invalid when using ${OPT_TOOL_NAME} tool"
+    fi
+    if [ -z "${OPT_TOOL}" ]
+    then
+        OPT_TOOL=$(tool_get_base_opts "${OPT_TOOL_NAME}")
+    else
+        tool_uses_forbidden_option "${OPT_TOOL_NAME}" "${OPT_TOOL}" && \
+            end_die "Incompatible option(s) detected within toolopts (option -o)"
+    fi
+
+
+}
+
+########## Work-related functions (in-memory, running-jobs handling)
+
+# Initialize WORK_FREEWORKERS by expanding OPT_WRKRS up to OPT_JOBS elements,
+# assigning a fixed number of slots to each worker.
+# Sanitize OPT_WRKRS if necessary.
+work_list_free_workers_init () {
+    local _OPT_WRKRS_NUM=$(echo ${OPT_WRKRS} | awk '{print NF}')
+    if [ ${_OPT_WRKRS_NUM} -gt 0 ]
+    then
+        local _i=0
+        while [ ${_i} -lt ${OPT_JOBS} ]
+        do
+            local _OPT_WRKRS_IDX="$((${_i} % ${_OPT_WRKRS_NUM} + 1))"
+            WORK_FREEWORKERS="${WORK_FREEWORKERS} $(echo ${OPT_WRKRS} | awk '{print $'${_OPT_WRKRS_IDX}'}')"
+            _i=$((${_i} + 1))
+        done
+    else
+        OPT_WRKRS=""
+        WORK_FREEWORKERS="local"
+    fi
+}
+
+# Pick-up next worker
+work_list_pick_next_free_worker () {
+    echo "${WORK_FREEWORKERS}" | awk '{print $1}'
+}
+
+# Remove next worker from list
+work_list_trunc_next_free_worker () {
+    WORK_FREEWORKERS="$(echo ${WORK_FREEWORKERS} | sed -E 's/^[[:space:]]*[^[:space:]]+[[:space:]]*//')"
+}
+
+# Push a work to the list of currently-running ones
+work_list_push () {
+    if [ -n "$1" ]
+    then
+        WORK_LIST="${WORK_LIST} $1"
+        WORK_NUM="$((${WORK_NUM} + 1))"
+    fi
+}
+
+# Rebuild the currently-running jobs' list by examining each process' state
+work_list_refresh () {
+    local _WORK_LIST=""
+    local _WORK_NUM=0
+    for _JOB in ${WORK_LIST}
+    do
+	job_name=$(echo ${_JOB} | cut -f1 -d:)
+	job_running="True"
+        if [ -n "${OPT_K8S_IMAGE}" ]	
+	then
+	    job_status=$(kubectl describe job $job_name | grep "Pods Statuses:" 2>/dev/null)
+	    if [ -z "$job_status" ]
+            then
+                echo_log "1" "<= [QMGR] ERROR: $job_name didn't start"
+                job_running="False"
+	    elif echo "$job_status" | grep  "/ 1 Succeeded /" >/dev/null
+            then
+                echo_log "1" "<= [QMGR] k8s job $job_name complete"
+                job_running="False"
+	    elif echo "$job_status" | grep -v "/ 0 Failed" >/dev/null
+            then
+                echo_log "1" "<= [QMGR] ERROR: one of the pods for $job_name failed"
+		job_running="False"
+            fi
+	    if [ "$job_running" = "False" ]
+	    then
+                kubectl delete job $job_name >/dev/null 2>&1
+                echo_log "1" "<= [QMGR] Deleting k8s job $job_name"
+	    fi
+	else
+            # If the process is still alive, keep it
+            if ps "$job_name" 1>/dev/null 2>&1
+            then
+                job_running="True"
+            else
+                job_running="False"
+            fi
+	fi
+	if [ "$job_running" = "True" ]
+        then
+            _WORK_LIST="${_WORK_LIST} ${_JOB}"
+            _WORK_NUM="$((${_WORK_NUM} + 1))"
+        # If not, put its worker to the free list
+        else
+            echo_log "1" "<= [QMGR] Job ${_JOB} finished"
+            if [ -n "${OPT_WRKRS}" ]
+            then
+                WORK_FREEWORKERS="${WORK_FREEWORKERS} $(echo ${_JOB} | cut -d ':' -f 3)"
+            fi
+        fi
+    done
+    WORK_LIST=${_WORK_LIST}
+    WORK_NUM=${_WORK_NUM}
+}
+
+########## Jobs-related functions (on-disk, jobs' queue handling)
+
+# Initialize job queue and work directories
+job_queue_init () {
+    mkdir -p "${JOBS_QUEUEDIR}" 2>/dev/null || \
+        end_die "Cannot create job queue directory ${JOBS_QUEUEDIR}"
+    mkdir -p "${JOBS_WORKDIR}" 2>/dev/null || \
+        end_die "Cannot create job work directory ${JOBS_WORKDIR}"
+}
+
+# Dump job queue information to allow later resuming
+job_queue_info_dump () {
+    # Create "info" file
+    local _TMPMASK="$(umask)"
+    umask "0077"
+    touch "${JOBS_QUEUEDIR}/info" 2>/dev/null
+    umask "${_TMPMASK}"
+
+    # Dump necessary information for resuming a run
+    cat << EOF > "${JOBS_QUEUEDIR}/info" || \
+        end_die "Cannot record run information"
+# Run information used for resuming, do not edit !
+OPT_RJOBS="${OPT_JOBS}"
+OPT_TOOL_NAME="${OPT_TOOL_NAME}"
+OPT_SRCDIR="${OPT_SRCDIR}"
+OPT_DSTURL="${OPT_DSTURL}"
+EOF
+}
+
+job_queue_info_load () {
+    # Source info file and initialize a few variables
+    . "${JOBS_QUEUEDIR}/info" || \
+        end_die "Cannot read run information"
+
+    # Validate loaded options
+    { is_num "${OPT_RJOBS}" && [ ${OPT_RJOBS} -ge 1 ] ;} || \
+        end_die "Invalid option value loaded from resumed run: OPT_RJOBS"
+
+    ! tool_is_supported "${OPT_TOOL_NAME}" && \
+        end_die "Invalid option value loaded from resumed run: OPT_TOOL_NAME"
+
+    is_abs_path "${OPT_SRCDIR}" || \
+        end_die "Invalid options value loaded from resumed run: OPT_SRCDIR"
+
+    if ! tool_supports_urls "${OPT_TOOL_NAME}"
+    then
+        is_abs_path "${OPT_DSTURL}" || \
+            end_die "Invalid options value loaded from resumed run: OPT_DSTURL"
+    else
+        is_abs_path "${OPT_DSTURL}" || is_remote_path "${OPT_DSTURL}" || \
+            end_die "Invalid options value loaded from resumed run: OPT_DSTURL"
+    fi
+}
+
+# Set the "fp_done" (fpart done) flag within job queue
+job_queue_fp_done () {
+    sleep 1 # Ensure this very last file gets created within the next second of
+            # last job file's mtime. Necessary for filesystems that don't get
+            # below the second for mtime precision (msdosfs).
+    touch "${JOBS_QUEUEDIR}/fp_done"
+}
+
+# Set the "sl_done" (sync loop done) flag within job queue
+job_queue_sl_done () {
+    touch "${JOBS_QUEUEDIR}/sl_done"
+}
+
+# Set the "sl_stop" (sync loop stop) flag within job queue
+job_queue_sl_stop () {
+    touch "${JOBS_QUEUEDIR}/sl_stop"
+}
+
+# Handle first ^C: stop queue processing by setting the "sl_stop" flag
+# then wait for sync jobs to complete and display status before exiting
+sigint_handler () {
+    SIGINT_COUNT="$((${SIGINT_COUNT} + 1))"
+    job_queue_sl_stop
+    if [ ${SIGINT_COUNT} -eq 1 ]
+    then
+        echo_log "1" "===> Interrupted. Waiting for running jobs to complete..."
+        echo_log "1" "===> (hit ^C again to kill them and exit)"
+        # Wait for queue processing to stop
+        wait
+        # Display current status before exiting
+        [ ${OPT_VERBOSE} -ge 1 ] && siginfo_handler
+        # Exit program
+        end_die
+    fi
+}
+
+# Handle subsequent ^C from within job_queue_loop(): kill sync processes
+# to fast-unlock the main process (waiting for child processes to exit)
+job_queue_loop_sigint_handler () {
+    SIGINT_COUNT="$((${SIGINT_COUNT} + 1))"
+    if [ ${SIGINT_COUNT} -eq 2 ]
+    then
+        echo_log "1" "===> Interrupted again, killing remaining jobs"
+        for _JOB in ${WORK_LIST}
+        do
+            job_name=$(echo ${_JOB} | cut -f1 -d:)
+            if [ -n "${OPT_K8S_IMAGE}" ]
+            then
+                kubectl delete job $job_name
+            else
+                kill "$job_name" 1>/dev/null 2>&1
+            fi
+        done
+        # Wait for child processes to exit and let parent process end_die()
+        wait
+    fi
+}
+
+# Handle ^T: print info about queue status
+siginfo_handler () {
+    # Job counters
+    local _jobs_total="$(cd "${FPART_PARTSDIR}" && ls -t1 | wc -l | awk '{print $1}')"
+    local _jobs_done="$(cd "${JOBS_WORKDIR}" && ls -t1 | grep -v 'fp_done' | wc -l | awk '{print $1}')"
+    local _jobs_remaining="$(( ${_jobs_total} - ${_jobs_done} ))"
+
+    local _jobs_percent="??"
+    [ ${_jobs_total} -ge 1 ] && \
+        _jobs_percent="$(( (${_jobs_done} * 100) / ${_jobs_total} ))"
+
+    # Time counters, relative to the current run (resume-aware)
+    local _ts=$(date '+%s')
+    local _run_elapsed_time="$(( ${_ts} - ${_run_start_time} ))"
+    local _run_jobs_done="$(( ${_jobs_done} - ${_run_start_jobs} ))"
+
+    local _run_time_per_job="??"
+    local _run_time_remaining="??"
+    if [ ${_run_jobs_done} -ge 1 ]
+    then
+        _run_time_per_job="$(( ${_run_elapsed_time} / ${_run_jobs_done} ))"
+        _run_time_remaining="$(( (${_run_elapsed_time} * ${_jobs_remaining}) / ${_run_jobs_done} ))"
+    fi
+
+    echo "${_ts} <===   Parts done: ${_jobs_done}/${_jobs_total} (${_jobs_percent}%), remaining: ${_jobs_remaining}"
+    echo "${_ts} <=== Time elapsed: ${_run_elapsed_time}s, remaining: ~${_run_time_remaining}s (~${_run_time_per_job}s/job)"
+}
+
+# Get next job name relative to ${JOBS_WORKDIR}/
+# Returns empty string if no job is available
+# JOBS_QUEUEDIR can host several types of file :
+# <job_number>: a sync job to perform
+# 'info': info file regarding this fpsync run
+# 'sl_stop': the 'immediate stop' flag, set when ^C is hit
+# 'fp_done': set when fpart has finished crawling src_dir/ and generated jobs
+# 'sl_done': set when job_queue_loop() terminates (either normally or stopped)
+job_queue_next () {
+    local _NEXT=""
+    if [ -f "${JOBS_QUEUEDIR}/sl_stop" ]
+    then
+        echo "sl_stop"
+    else
+        _NEXT=$(cd "${JOBS_QUEUEDIR}" && ls -rt1 2>/dev/null | grep -v 'info' 2>/dev/null | head -n 1)
+        if [ -n "${_NEXT}" ]
+        then
+            mv "${JOBS_QUEUEDIR}/${_NEXT}" "${JOBS_WORKDIR}" || \
+                end_die "Cannot dequeue next job"
+            echo "${_NEXT}"
+        fi
+    fi
+}
+
+# Main jobs' loop: pick up jobs within the queue directory and start them
+job_queue_loop () {
+    echo_log "2" "===> [QMGR] Starting queue manager"
+
+    # Trap SIGINT
+    trap 'job_queue_loop_sigint_handler' 2
+    # Ignore SIGINFO from within loop, handled by the parent (master) process
+    trap '' 29
+
+    local _NEXT=""
+    while [ "${_NEXT}" != "fp_done" ] && [ "${_NEXT}" != "sl_stop" ]
+    do
+        local _PID=""
+        if [ ${WORK_NUM} -lt ${OPT_JOBS} ]
+        then
+            _NEXT="$(job_queue_next)"
+            if [ -n "${_NEXT}" ] && \
+                [ "${_NEXT}" != "fp_done" ] && \
+                [ "${_NEXT}" != "sl_stop" ]
+            then
+                if [ -z "${OPT_WRKRS}" ]
+                then
+                    echo_log "2" "=> [QMGR] Starting job ${JOBS_WORKDIR}/${_NEXT} (local)"
+		    if [ -n "${OPT_K8S_IMAGE}" ]
+                    then
+			k8s_job_name="${OPT_TOOL_NAME}-$(basename ${JOBS_WORKDIR})-${_NEXT}"
+#			k8s_spec_file="$(dirname ${FPART_LOGFILE})/${k8s_job_name}.yml"
+                        k8s_spec_file="/tmp/fpsync/${k8s_job_name}.yml"
+                        echo_log "1" "===> Using kubectl to start job $k8s_job_name with $k8s_spec_file"
+
+cat >$k8s_spec_file <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+    name: ${k8s_job_name}
+spec:
+    template:
+        spec:
+            containers:
+            - name: ${k8s_job_name}
+              image: ${OPT_K8S_IMAGE}
+              env:
+              - name: FPART_JOBCOMMAND
+                value: $(cat ${JOBS_WORKDIR}/${_NEXT})
+              - name: BASE64_RCLONE_CONFIG
+                value: "${BASE64_RCLONE_CONFIG}"
+              volumeMounts:
+              - name: lustre-volume
+                mountPath: "/$(echo ${OPT_SRCDIR} | cut -f2 -d/)"
+            restartPolicy: Never
+            volumes:
+            - name: lustre-volume
+              persistentVolumeClaim:
+                claimName: lustre-pvc
+EOF
+                        out=$(kubectl create -f  $k8s_spec_file 2>&1)
+                        echo_log "1" "=> $out"
+                        work_list_push "${k8s_job_name}:k8s"
+	            else
+                        /bin/sh "${JOBS_WORKDIR}/${_NEXT}" &
+                        work_list_push "$!:${_NEXT}:local"
+		    fi
+                else
+                    local _NEXT_HOST="$(work_list_pick_next_free_worker)"
+                    work_list_trunc_next_free_worker
+                    echo_log "2" "=> [QMGR] Starting job ${JOBS_WORKDIR}/${_NEXT} -> ${_NEXT_HOST}"
+                    "${SSH_BIN}" "${_NEXT_HOST}" '/bin/sh -s' \
+                        < "${JOBS_WORKDIR}/${_NEXT}" &
+                    work_list_push "$!:${_NEXT}:${_NEXT_HOST}"
+                fi
+            fi
+        fi
+        work_list_refresh
+        sleep 0.2
+    done
+
+    if [ "${_NEXT}" = "fp_done" ]
+    then
+        echo_log "2" "<=== [QMGR] Done submitting jobs. Waiting for them to finish."
+    else
+        echo_log "2" "<=== [QMGR] Stopped. Waiting for jobs to finish."
+    fi
+    wait
+    echo_log "2" "<=== [QMGR] Queue processed"
+
+    # Set the 'sl_done' (sync done) flag to let the master process go
+    job_queue_sl_done
+}
+
+# Print a specific run's status to stdout
+# $1 = runid
+run_status_print () {
+    if [ -f "${OPT_TMPDIR}/queue/${1}/fp_done" ]
+    then
+        echo "resumable (synchronization not complete, use -r to resume)"
+    else
+        if [ -f "${OPT_TMPDIR}/work/${1}/fp_done" ]
+        then
+            echo "replayable (synchronization complete, use -R to replay)"
+        else
+            echo "not resumable (fpart pass not complete)"
+        fi
+    fi
+}
+
+########## Program start (main() !)
+
+# Parse command-line options
+parse_opts "$@"
+
+## Paths to 3rd party binaries
+
+# Paths to executables that must exist locally
+FPART_BIN="$(command -v fpart)"
+SSH_BIN="$(command -v ssh)"
+MAIL_BIN="$(command -v mail)"
+TAR_BIN="$(command -v tar)"
+
+# Paths to executables that must exist both locally and remotely
+SUDO_BIN="$(command -v sudo)"
+SUDO=""
+[ -n "${OPT_SUDO}" ] && \
+    SUDO="${SUDO_BIN}"
+
+# Paths to executables that must exist either locally or remotely (depending
+# on if you use SSH or not). When using SSH, the following binaries must be
+# present at those paths on each worker.
+if [ "${OPT_TOOL_NAME}" = "tarify" ]
+then
+    TOOL_BIN=$(command -v "tar")
+else
+    TOOL_BIN=$(command -v "${OPT_TOOL_NAME}")
+fi
+
+## Simple run-related -independent- actions, not requiring FPART_RUNID
+
+# List runs and exit
+if [ -n "${OPT_LISTRUNS}" ]
+then
+    echo "<=== Listing runs"
+    for _run in \
+        $(cd "${OPT_FPSHDIR}/parts" 2>/dev/null && ls -1)
+    do
+        echo "===> Run: ID: ${_run}, status: $(run_status_print "${_run}")"
+    done
+    end_ok
+fi
+
+# Delete run and exit
+if [ -n "${OPT_DELETERUN}" ]
+then
+    { [ -d "${OPT_FPSHDIR}/parts/${OPT_DELETERUN}" ] && \
+        rm -rf "${OPT_FPSHDIR}/parts/${OPT_DELETERUN}" && \
+        rm -rf "${OPT_FPSHDIR}/log/${OPT_DELETERUN}" && \
+        rm -rf "${OPT_TMPDIR}/queue/${OPT_DELETERUN}" && \
+        rm -rf "${OPT_TMPDIR}/work/${OPT_DELETERUN}" && \
+        end_ok "Successfully deleted run ${OPT_DELETERUN}" ;} || \
+            end_die "Error deleting run ${OPT_DELETERUN}"
+fi
+
+# Archive run and exit
+if [ -n "${OPT_ARCHIVERUN}" ]
+then
+    [ ! -x "${TAR_BIN}" ] && \
+        end_die "Tar is missing locally, check your configuration"
+
+    { [ -d "${OPT_FPSHDIR}/parts/${OPT_ARCHIVERUN}" ] && \
+        ( cd "${OPT_TMPDIR}" 2>/dev/null && \
+            "${TAR_BIN}" czf fpsync-run-${OPT_ARCHIVERUN}.tgz \
+                "${OPT_FPSHDIR}/parts/${OPT_ARCHIVERUN}" \
+                "${OPT_FPSHDIR}/log/${OPT_ARCHIVERUN}" \
+                "${OPT_TMPDIR}/queue/${OPT_ARCHIVERUN}" \
+                "${OPT_TMPDIR}/work/${OPT_ARCHIVERUN}" 2>/dev/null ) && \
+            end_ok "Successfully created ${OPT_TMPDIR}/fpsync-run-${OPT_ARCHIVERUN}.tgz" ;} || \
+                end_die "Error archiving run ${OPT_ARCHIVERUN}"
+fi
+
+## Options' post-processing section, advanced variables' initialization
+
+# Run ID initialization
+if [ -n "${OPT_RUNID}" ]
+then
+    # Resume mode, check if run ID exists
+    if [ -d "${OPT_TMPDIR}/queue/${OPT_RUNID}" ] && \
+        [ -d "${OPT_TMPDIR}/work/${OPT_RUNID}" ]
+    then
+        FPART_RUNID="${OPT_RUNID}"
+    else
+        end_die "Could not find specified run's queue and work directories"
+    fi
+else
+    # Generate a unique run ID. This run ID *must* remain
+    # unique from one run to another.
+    FPART_RUNID="$(date '+%s')-$$"
+fi
+
+# Queue manager configuration. This queue remains local, even when using SSH.
+JOBS_QUEUEDIR="${OPT_TMPDIR}/queue/${FPART_RUNID}" # Sync jobs' queue dir
+JOBS_WORKDIR="${OPT_TMPDIR}/work/${FPART_RUNID}"   # Currently syncing jobs' dir
+
+# Fpart paths. Those ones must be shared amongst all nodes when using SSH
+# (e.g. through a NFS share mounted on *every* single node, including the master
+# 'job submitter').
+FPART_PARTSDIR="${OPT_FPSHDIR}/parts/${FPART_RUNID}"
+FPART_PARTSTMPL="${FPART_PARTSDIR}/part"
+FPART_LOGDIR="${OPT_FPSHDIR}/log/${FPART_RUNID}"
+FPART_LOGFILE="${FPART_LOGDIR}/fpart.log"
+
+# Prepare mode-specific tool and fpart options
+TOOL_MODEOPTS=$(tool_get_tool_mode_opts "${OPT_TOOL_NAME}" "${OPT_DIRSONLY}")
+FPART_MODEOPTS=$(tool_get_fpart_mode_opts "${OPT_TOOL_NAME}" "${OPT_DIRSONLY}")
+FPART_JOBCOMMAND= ; tool_init_fpart_job_command "${OPT_TOOL_NAME}"
+FPART_POSTHOOK="echo \"${FPART_JOBCOMMAND}\" > \
+    \"${JOBS_QUEUEDIR}/\${FPART_PARTNUMBER}\" && \
+    [ ${OPT_VERBOSE} -ge 2 ] && \
+    echo \"\$(date '+%s') ==> [FPART] Partition \${FPART_PARTNUMBER} written\"" # [1]
+
+# [1] Be careful to host the job queue on a filesystem that can handle
+# fine-grained mtime timestamps (i.e. with a sub-second precision) if you want
+# the queue to be processed in order when fpart generates several job files per
+# second.
+# On FreeBSD, vfs timestamps' precision can be tuned using the
+# vfs.timestamp_precision sysctl. See vfs_timestamp(9).
+
+## End of options' post-processing section, let's start for real now !
+
+SIGINT_COUNT="0"    # ^C counter
+
+WORK_NUM=0          # Current number of running processes
+WORK_LIST=""        # Work PID:PART:WORKER list
+WORK_FREEWORKERS="" # Free workers' list
+
+# Check for local binaries' presence
+[ ! -x "${FPART_BIN}" ] && \
+    end_die "Fpart is missing locally, check your configuration"
+[ -n "${OPT_WRKRS}" ] && [ ! -x "${SSH_BIN}" ] && \
+    end_die "SSH is missing locally, check your configuration"
+[ -n "${OPT_MAIL}" ] && [ ! -x "${MAIL_BIN}" ] && \
+    end_die "Mail is missing locally, check your configuration"
+[ -n "${OPT_SUDO}" ] && [ ! -x "${SUDO}" ] && \
+    end_die "Sudo is missing locally, check your configuration"
+
+# Create / check for fpart shared directories
+if [ -z "${OPT_RUNID}" ]
+then
+    # For a new run, create those directories
+    mkdir -p "${FPART_PARTSDIR}" 2>/dev/null || \
+        end_die "Cannot create partitions' output directory: ${FPART_PARTSDIR}"
+    mkdir -p "${FPART_LOGDIR}" 2>/dev/null || \
+        end_die "Cannot create log directory: ${FPART_LOGDIR}"
+else
+    # In resume mode, FPART_PARTSDIR and FPART_LOGDIR must already exist
+    if [ ! -d "${FPART_PARTSDIR}" ] || [ ! -d "${FPART_LOGDIR}" ]
+    then
+        end_die "Could not find specified run's 'parts' and 'log' directories"
+    fi
+fi
+
+# Create or update log file
+touch "${FPART_LOGFILE}" 2>/dev/null || \
+    end_die "Cannot create log file: ${FPART_LOGFILE}"
+
+# Create / check for run's queue and work dirs
+if [ -z "${OPT_RUNID}" ]
+then
+    # For a new run, create those directories
+    job_queue_init
+else
+    # When resuming a run, check if :
+    # - we can get the number of workers previously implied
+    #   (the 'info' flag is present)
+    # - the work queue exists
+    # + For standard resume mode, strictly check if :
+    #   - the last fpart pass has completed
+    #     (the 'fp_done' flag has been created in job queue dir)
+    #   - the last fpsync pass has *not* completed
+    #     (the 'fp_done' flag is *still* present in job queue dir)
+    # + For replay mode, we accept that :
+    #   - the last fpsync pass has completed
+    #     (the 'fp_done' flag has been moved to the work queue dir)
+    [ ! -f "${JOBS_QUEUEDIR}/info" ] && \
+        end_die "Specified run is not resumable ('info' flag missing)"
+    [ ! -d "${JOBS_WORKDIR}" ] && \
+        end_die "Specified run is not resumable (work queue missing)"
+
+    # Check for presence of 'fp_done' flag:
+    # - strictly in JOBS_QUEUEDIR for standard resume mode
+    # - optionally in JOBS_WORKDIR for replay mode
+    # and throw an error if 'fp_done' not found at all
+    if [ ! -f "${JOBS_QUEUEDIR}/fp_done" ]
+    then
+        if [ -z "${OPT_REPLAYRUN}" ] || [ ! -f "${JOBS_WORKDIR}/fp_done" ]
+        then
+            end_die "Specified run is not resumable (try -R to replay ?)"
+        fi
+    fi
+
+    # Run is resumable, try to reload info and prepare queues
+    job_queue_info_load
+
+    # Remove the "sl_stop" and "sl_done" flags, if any
+    rm -f "${JOBS_QUEUEDIR}/sl_stop" 2>/dev/null
+    rm -f "${JOBS_QUEUEDIR}/sl_done" 2>/dev/null
+
+    # Move potentially-incomplete jobs to the jobs queue so that they can be
+    # executed again. We consider the worst-case scenario and resume OPT_RJOBS
+    # last jobs, some of them being partially finished.
+    for _file in \
+        $(cd "${JOBS_WORKDIR}" && ls -t1 | head -n "${OPT_RJOBS}")
+    do
+        mv "${JOBS_WORKDIR}/${_file}" "${JOBS_QUEUEDIR}" 2>/dev/null || \
+            end_die "Error resuming specified run (could not re-schedule jobs)"
+    done
+    # When performing a replay:
+    # - reschedule already done jobs to the jobs queue
+    # - move 'fp_done' flag (implicit, with other files) to the jobs queue
+    if [ -n "${OPT_REPLAYRUN}" ]
+    then
+        for _file in \
+            $(cd "${JOBS_WORKDIR}" && ls -1)
+        do
+            mv -f "${JOBS_WORKDIR}/${_file}" "${JOBS_QUEUEDIR}" 2>/dev/null || \
+                end_die "Error replaying specified run (could not re-schedule jobs)"
+        done
+    fi
+fi
+
+# Validate src_dir/ locally (needed for fpart) for first runs or local ones
+if [ -z "${OPT_RUNID}" ] || [ -z "${OPT_WRKRS}" ]
+then
+    [ ! -d "${OPT_SRCDIR}" ] && \
+        end_die "Source directory does not exist (or is not a directory): ${OPT_SRCDIR}"
+fi
+
+# When using SSH, validate src_dir/ and dst_url/ remotely and check for tool
+# presence (this also allows checking SSH connectivity to each declared host)
+if [ -n "${OPT_WRKRS}" ]
+then
+    echo_log "2" "=====> Validating requirements on SSH nodes..."
+
+    _FIRST_HOST="$(echo ${OPT_WRKRS} | awk '{print $1}')"
+    for _host in ${OPT_WRKRS}
+    do
+        # Check for sudo presence (it must be passwordless)
+        if [ -n "${OPT_SUDO}" ]
+        then
+            "${SSH_BIN}" "${_host}" "${SUDO} /bin/sh -c ':' 2>/dev/null" || \
+                end_die "Sudo executable not found or requires password on target ${_host}"
+        fi
+
+        # When using a local (or NFS-mounted) dest dir...
+        if is_abs_path "${OPT_DSTURL}"
+        then
+            # ...blindly try to create dst_url/ as well as a witness file on
+            # the first node. Using a witness file will allow us to check for
+            # its presence/visibility from other nodes, avoiding "split-brain"
+            # situations where dst_url/ exists but is not shared amongst all
+            # nodes (typically a local mount point where the shared storage
+            # area *should* be mounted but isn't, for any reason).
+            [ "${_host}" = "${_FIRST_HOST}" ] && \
+                "${SSH_BIN}" "${_host}" "/bin/sh -c 'mkdir -p \"${OPT_DSTURL}\" && \
+                    ${SUDO} touch \"${OPT_DSTURL}/${FPART_RUNID}\"' 2>/dev/null"
+        fi
+
+        # Check for src_dir/ presence
+        "${SSH_BIN}" "${_host}" "/bin/sh -c '[ -d \"${OPT_SRCDIR}\" ]'" || \
+            end_die "Source directory does not exist on target ${_host} (or is not a directory): ${OPT_SRCDIR}"
+
+        # Check for dst_url/ presence (witness file)
+        if is_abs_path "${OPT_DSTURL}"
+        then
+            "${SSH_BIN}" "${_host}" "/bin/sh -c '[ -f \"${OPT_DSTURL}/${FPART_RUNID}\" ]'" || \
+                end_die "Destination directory (shared) is not available on target ${_host}: ${OPT_DSTURL}"
+        fi
+
+        # Finally, check for tool presence
+        "${SSH_BIN}" "${_host}" "/bin/sh -c '[ -x \"${TOOL_BIN}\" ]'" || \
+            end_die "Tool ${OPT_TOOL_NAME} not useable on target ${_host}: ${TOOL_BIN} not found"
+
+        echo_log "2" "<=== ${_host}: OK"
+    done
+
+    # Remove witness file
+    if is_abs_path "${OPT_DSTURL}"
+    then
+        "${SSH_BIN}" "${_FIRST_HOST}" \
+            "/bin/sh -c '${SUDO} rm -f \"${OPT_DSTURL}/${FPART_RUNID}\"' 2>/dev/null"
+    fi
+
+    unset _FIRST_HOST
+else
+    # Local usage - create dst_url/ and check for tool presence
+    if is_abs_path "${OPT_DSTURL}" && [ ! -d "${OPT_DSTURL}" ]
+    then
+        mkdir -p "${OPT_DSTURL}" 2>/dev/null || \
+            end_die "Cannot create destination directory: ${OPT_DSTURL}"
+    fi
+    [ ! -x "${TOOL_BIN}" ] && \
+        end_die "Tool ${OPT_TOOL_NAME} not useable locally: ${TOOL_BIN} not found"
+fi
+
+# Dispatch OPT_WRKRS into WORK_FREEWORKERS
+work_list_free_workers_init
+
+# Let's rock !
+echo_log "2" "=====> [$$] Syncing ${OPT_SRCDIR} => ${OPT_DSTURL}"
+echo_log "1" "===> Run ID: ${FPART_RUNID}$([ -n "${OPT_RUNID}" ] && echo ' (resumed)')"
+echo_log "2" "===> Start time: $(date)"
+echo_log "2" "===> Concurrent sync jobs: ${OPT_JOBS}"
+echo_log "2" "===> Workers: $(echo "${OPT_WRKRS}" | sed -E -e 's/^[[:space:]]+//' -e 's/[[:space:]]+/ /g')$([ -z "${OPT_WRKRS}" ] && echo 'local')"
+echo_log "2" "===> Shared dir: ${OPT_FPSHDIR}"
+echo_log "2" "===> Temp dir: ${OPT_TMPDIR}"
+echo_log "2" "===> Tool name: \"${OPT_TOOL_NAME}\""
+# The following options are ignored when resuming
+if [ -z "${OPT_RUNID}" ]
+then
+    echo_log "2" "===> Tool options: \"${OPT_TOOL}\""
+    echo_log "2" "===> Fpart options: \"${OPT_FPART}\""
+    echo_log "2" "===> Max files or directories per sync job: ${OPT_FPMAXPARTFILES}"
+    echo_log "2" "===> Max bytes per sync job: ${OPT_FPMAXPARTSIZE}"
+fi
+
+# Record run information
+job_queue_info_dump
+
+# Record initial status, required by siginfo_handler()
+_run_start_jobs="$(cd "${JOBS_WORKDIR}" && ls -t1 | grep -v 'fp_done' | wc -l | awk '{print $1}')"
+_run_start_time="$(date '+%s')"
+
+# When not in prepare mode, start synchronization loop
+if [ -z "${OPT_PREPARERUN}" ]
+then
+    # Set SIGINT and SIGINFO traps and start job_queue_loop
+    trap 'sigint_handler' 2
+    trap 'siginfo_handler' 29
+    echo_log "2" "===> Use ^C to abort, ^T (SIGINFO) to display status"
+    job_queue_loop&
+fi
+
+# When not resuming a previous run, start fpart
+if [ -z "${OPT_RUNID}" ]
+then
+    # Fork sub-shell to restrict set and IFS scope
+    (
+        # Enable pipefail if supported by current shell
+        # (needed because of tee sink)
+        set -o | grep -q '^pipefail' && \
+            set -o pipefail
+        # Allow passing special characters within fpart sub-options
+        # (OPT_FPART, FPART_MODEOPTS)
+        set -o noglob
+        # Allow spaces within fpart sub-options
+        IFS="|"
+
+        echo_log "1" "===> Analyzing filesystem..."
+        
+	# When invoking rclone, the source option to pass to fpart is different
+	if [ "$OPT_TOOL_NAME" = "rclone" ]
+	then
+	    WORK_DIR=`pwd`
+	    SRC_DIR=$OPT_SRCDIR
+	else
+	    WORK_DIR=$OPT_SRCDIR
+	    SRC_DIR="."
+	fi
+
+        # Start fpart from src_dir/ directory and produce jobs within
+        # ${JOBS_QUEUEDIR}/
+        cd "${WORK_DIR}" && \
+            ${SUDO} "${FPART_BIN}" \
+            $([ ${OPT_FPMAXPARTFILES} -gt 0 ] && printf '%s\n' "-f ${OPT_FPMAXPARTFILES}") \
+            $({ { is_num "${OPT_FPMAXPARTSIZE}" && [ ${OPT_FPMAXPARTSIZE} -gt 0 ] ;} || is_size "${OPT_FPMAXPARTSIZE}" ;} && printf '%s\n' "-s ${OPT_FPMAXPARTSIZE}") \
+            -o "${FPART_PARTSTMPL}" -e ${OPT_FPART} ${FPART_MODEOPTS} -L \
+            -W "${FPART_POSTHOOK}" ${SRC_DIR} 2>&1 | \
+            tee -a "${FPART_LOGFILE}"
+    )
+
+    [ $? -ne 0 ] && \
+        end_die "Fpart exited with errors"
+
+    # Tell job_queue_loop that crawling has finished
+    job_queue_fp_done
+fi
+
+# When not in prepare mode, wait for job_queue_loop to terminate
+if [ -z "${OPT_PREPARERUN}" ]
+then
+    # Use an active wait to allow signal processing (^T)
+    echo_log "1" "===> Waiting for sync jobs to complete..."
+    while [ ! -f "${JOBS_QUEUEDIR}/sl_done" ]
+    do
+        sleep 0.2
+    done
+fi
+
+# Display final status
+[ ${OPT_VERBOSE} -ge 1 ] && siginfo_handler
+
+# Examine results and print/send report
+if [ -n "${OPT_PREPARERUN}" ]
+then
+    echo_log "0" "<=== Successfully prepared run: ${FPART_RUNID}"
+    _report_subj="Fpsync run ${FPART_RUNID} (prepared)"
+else
+    _report_subj="Fpsync run ${FPART_RUNID}"
+fi
+_report_logs=$(find "${FPART_LOGDIR}/" -name "*.stderr" ! -size 0)
+[ -z "${_report_logs}" ] && _report_logs=$(grep -l ERROR ${FPART_LOGFILE})
+_report_body=$( { [ -z "${_report_logs}" ] && echo 'Fpsync completed without error.' ;} || \
+    { echo "Fpsync completed with errors, see logs:" && echo "${_report_logs}" ;} )
+echo_log "1" "<=== ${_report_body}"
+echo_log "2" "<=== End time: $(date)"
+[ -n "${OPT_MAIL}" ] && \
+    echo "${_report_body}" | ${MAIL_BIN} -s "${_report_subj}" ${OPT_MAIL}
+
+[ -n "${_report_logs}" ] && end_die
+end_ok
