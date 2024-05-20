@@ -1,0 +1,1 @@
+PART_SIZE=2048 && kfpsync -v -K  -m rclone -d /data/fpsync  -f $PART_SIZE -n 2 -o "--oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --multi-thread-streams 64 --transfers $PART_SIZE --oos-chunk-size 5120Mi --oos-upload-concurrency 32 --oos-disable-checksum  --oos-leave-parts-on-error" /data/checkpoints/ rclone:backup-bucket-1
