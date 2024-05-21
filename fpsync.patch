@@ -1,5 +1,5 @@
 --- /usr/bin/fpsync	2021-10-19 19:02:12.000000000 +0000
-+++ /root/kfpsync	2024-05-21 03:42:45.966180964 +0000
++++ kfpsync	2024-05-21 16:36:50.728757528 +0000
 @@ -44,11 +44,17 @@
  # Maximum files or directories per sync job (-f)
  OPT_FPMAXPARTFILES="2000"
@@ -110,9 +110,9 @@
 +            k8s_details=${OPTARG}
 +            OPT_K8S_IMAGE=$(echo "${k8s_details}" | cut -f1 -d,)
 +            OPT_K8S_PVC=$(echo "${k8s_details}" | cut -f2 -d,)
-+            if [ -z "${OPT_K8S_PVC}" ] || [ -z "${OPT_K8S_URL}" ] 
++            if [ -z "${OPT_K8S_PVC}" ] || [ -z "${OPT_K8S_IMAGE}" ] 
 +            then
-+                end_die "k8s value should be <image_url>,<pvc_name>, Example: -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc"
++                end_die "k8s value should be <image_url>,<pvc_name> Example: -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc"
 +            fi
 +            OPT_K8S_ENABLED="True"
 +            ;;
@@ -149,20 +149,46 @@
              if [ -n "${OPT_WRKRS}" ]
              then
                  WORK_FREEWORKERS="${WORK_FREEWORKERS} $(echo ${_JOB} | cut -d ':' -f 3)"
-@@ -767,6 +830,12 @@
-         done
-         # Wait for child processes to exit and let parent process end_die()
-         wait
-+        if [ -n "${OPT_K8S_ENABLED}" ]
-+        then
-+            job_name=$(echo ${_JOB} | cut -f3 -d:)
-+#            kubectl delete job $job_name >/dev/null 2>&1
-+            echo_log "1" "===> Deleted k8s job $job_name"
-+        fi
+@@ -751,23 +814,27 @@
+         [ ${OPT_VERBOSE} -ge 1 ] && siginfo_handler
+         # Exit program
+         end_die
++    else
++        [ -n "${JOBLOOP_PID}" ] && kill "${JOBLOOP_PID}"
      fi
  }
  
-@@ -794,6 +863,7 @@
+ # Handle subsequent ^C from within job_queue_loop(): kill sync processes
+ # to fast-unlock the main process (waiting for child processes to exit)
+ job_queue_loop_sigint_handler () {
+-    SIGINT_COUNT="$((${SIGINT_COUNT} + 1))"
+-    if [ ${SIGINT_COUNT} -eq 2 ]
+-    then
+-        echo_log "1" "===> Interrupted again, killing remaining jobs"
+-        for _JOB in ${WORK_LIST}
+-        do
+-            kill "$(echo ${_JOB} | cut -d ':' -f 1)" 1>/dev/null 2>&1
+-        done
+-        # Wait for child processes to exit and let parent process end_die()
+-        wait
+-    fi
++    echo_log "1" "===> ERROR: job queue monitor interrupted"
++    for _JOB in ${WORK_LIST}
++    do
++        kill "$(echo ${_JOB} | cut -d ':' -f 1)" 1>/dev/null 2>&1
++        if [ -n "${OPT_K8S_ENABLED}" ]
++        then
++            job_name=$(echo ${_JOB} | cut -f3 -d:)
++            kubectl delete job $job_name >/dev/null 2>&1
++            echo_log "1" "===> Deleted k8s job $job_name"
++        fi
++    done
++    # Wait for child processes to exit and let parent process end_die()
++    wait
+ }
+ 
+ # Handle ^T: print info about queue status
+@@ -794,6 +861,7 @@
          _run_time_remaining="$(( (${_run_elapsed_time} * ${_jobs_remaining}) / ${_run_jobs_done} ))"
      fi
  
@@ -170,7 +196,7 @@
      echo "${_ts} <===   Parts done: ${_jobs_done}/${_jobs_total} (${_jobs_percent}%), remaining: ${_jobs_remaining}"
      echo "${_ts} <=== Time elapsed: ${_run_elapsed_time}s, remaining: ~${_run_time_remaining}s (~${_run_time_per_job}s/job)"
  }
-@@ -822,9 +892,68 @@
+@@ -822,12 +890,72 @@
      fi
  }
  
@@ -226,7 +252,7 @@
 +        fi
 +        if [ "$job_running" = "False" ]
 +        then
-+#            kubectl delete job $k8s_job_name >/dev/null 2>&1
++            kubectl delete job $k8s_job_name >/dev/null 2>&1
 +            echo_log "1" "<= [QMGR] Deleting k8s job $k8s_job_name"
 +            break
 +        fi
@@ -240,7 +266,11 @@
  
      # Trap SIGINT
      trap 'job_queue_loop_sigint_handler' 2
-@@ -844,13 +973,20 @@
++    trap 'job_queue_loop_sigint_handler' 15
+     # Ignore SIGINFO from within loop, handled by the parent (master) process
+     trap '' 29
+ 
+@@ -844,13 +972,20 @@
              then
                  if [ -z "${OPT_WRKRS}" ]
                  then
@@ -265,7 +295,7 @@
                      "${SSH_BIN}" "${_NEXT_HOST}" '/bin/sh -s' \
                          < "${JOBS_WORKDIR}/${_NEXT}" &
                      work_list_push "$!:${_NEXT}:${_NEXT_HOST}"
-@@ -863,12 +999,14 @@
+@@ -863,12 +998,14 @@
  
      if [ "${_NEXT}" = "fp_done" ]
      then
@@ -283,6 +313,14 @@
  
      # Set the 'sl_done' (sync done) flag to let the master process go
      job_queue_sl_done
+@@ -1012,6 +1149,7 @@
+ ## End of options' post-processing section, let's start for real now !
+ 
+ SIGINT_COUNT="0"    # ^C counter
++JOBLOOP_PID=""      # pid for job loop
+ 
+ WORK_NUM=0          # Current number of running processes
+ WORK_LIST=""        # Work PID:PART:WORKER list
 @@ -1123,7 +1261,7 @@
  # presence (this also allows checking SSH connectivity to each declared host)
  if [ -n "${OPT_WRKRS}" ]
@@ -334,16 +372,18 @@
  fi
  
  # Record run information
-@@ -1220,7 +1358,7 @@
+@@ -1220,8 +1358,9 @@
      # Set SIGINT and SIGINFO traps and start job_queue_loop
      trap 'sigint_handler' 2
      trap 'siginfo_handler' 29
 -    echo_log "2" "===> Use ^C to abort, ^T (SIGINFO) to display status"
 +    echo_log "1" "===> Use ^C to abort, ^T (SIGINFO) to display status"
      job_queue_loop&
++    JOBLOOP_PID=$!
  fi
  
-@@ -1240,14 +1378,26 @@
+ # When not resuming a previous run, start fpart
+@@ -1240,14 +1379,26 @@
          IFS="|"
  
          echo_log "1" "===> Analyzing filesystem..."
@@ -373,7 +413,7 @@
              tee -a "${FPART_LOGFILE}"
      )
  
-@@ -1281,10 +1431,12 @@
+@@ -1281,10 +1432,12 @@
      _report_subj="Fpsync run ${FPART_RUNID}"
  fi
  _report_logs=$(find "${FPART_LOGDIR}/" -name "*.stderr" ! -size 0)
