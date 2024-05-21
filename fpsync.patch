@@ -1,0 +1,389 @@
+--- /usr/bin/fpsync	2021-10-19 19:02:12.000000000 +0000
++++ /root/kfpsync	2024-05-21 03:42:45.966180964 +0000
+@@ -44,11 +44,17 @@
+ # Maximum files or directories per sync job (-f)
+ OPT_FPMAXPARTFILES="2000"
+ # Maximum bytes per sync job (-s)
+-OPT_FPMAXPARTSIZE="$((4 * 1024 * 1024 * 1024))" # 4 GB
++# Don't need a default partition size so that the partition size is not always limited to default OPT_FPMAXPARTSIZE
++# If a OPT_FPMAXPARTSIZE is needed, specify it in the command line using -s option
++# OPT_FPMAXPARTSIZE="$((4 * 1024 * 1024 * 1024))" # 4 GB
+ # Work on a per-directory basis (disabled by default)
+ OPT_DIRSONLY=""
+ # SSH workers (execute jobs locally if not defined, -w)
+ OPT_WRKRS=""
++# Kubernetes worker enabled
++OPT_K8S_ENABLED=""
++OPT_K8S_IMAGE="fra.ocir.io/fsssolutions/rclone-rsync:latest"
++OPT_K8S_PVC="lustre-pvc"
+ # Fpart shared dir (must be shared amongst all workers, -d)
+ OPT_FPSHDIR=""
+ # Temporary dir (local, used for queue management, -t)
+@@ -165,7 +171,7 @@
+ # $1 = level (0 = quiet, 1 = verbose, >=2 more verbose)
+ # $2 = message to log
+ echo_log () {
+-    local _ts=$(date '+%s')
++    local _ts=$(date)
+     is_num "$1" && [ ${OPT_VERBOSE} -ge $1 ] && [ -n "$2" ] && \
+         echo "${_ts} $2"
+     [ -n "$2" ] && \
+@@ -214,18 +220,18 @@
+ # Chek if a tool is supported
+ # $1 = tool name
+ tool_is_supported () {
+-    echo "$1" | grep -qE '^(rsync|cpio|tar|tarify)$'
++    echo "$1" | grep -qE '^(rsync|cpio|tar|tarify|rclone)$'
+ }
+ 
+ # Print supported tools in a friendly manner
+ tool_print_supported () {
+-    echo "'rsync', 'cpio', 'tar' or 'tarify'"
++    echo "'rsync', 'cpio', 'tar', rclone or 'tarify'"
+ }
+ 
+ # Check if a tool supports a URL as sync target
+ # $1 = tool name
+ tool_supports_urls () {
+-    echo "$1" | grep -q '^rsync$'
++    echo "$1" | grep -q '^rsync$' || echo "$1" | grep -q '^rclone$'
+ }
+ 
+ # Check if a tool supports directory-only mode
+@@ -318,13 +324,39 @@
+ tool_init_fpart_job_command () {
+     case "$1" in
+     "rsync")
++        # Remove --from0 to avoid null terminated file names. Compatibility with rclone
+         FPART_JOBCOMMAND="/bin/sh -c '${SUDO} ${TOOL_BIN} ${OPT_TOOL} \
+-            ${TOOL_MODEOPTS} --files-from=\\\"\${FPART_PARTFILENAME}\\\" --from0 \
++            ${TOOL_MODEOPTS} --files-from=\\\"\${FPART_PARTFILENAME}\\\" \
+             \\\"${OPT_SRCDIR}/\\\" \
+             \\\"${OPT_DSTURL}/\\\"' \
+             1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
+             2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
+         ;;
++    "rclone")
++        # Make sure the rclone configuration file exist for the destination.
++        rclone_dst=$(echo ${OPT_DSTURL} |cut -f1 -d:)
++        rclone_src=$(echo ${OPT_SRCDIR} | grep ":")
++        [ -n "${rclone_src}" ] && end_die "rclone is not supported from source ${rclone_src}"
++        [ "${rclone_dst}" = "${OPT_DSTURL}" ] && end_die "rclone is not supported to destination ${rclone_dst}"
++        rclone_config="$HOME/.config/rclone/rclone.conf"
++        if [ ! -f "$rclone_config" ]
++        then
++            end_die "rclone configuratin file $rclone_config is missing"
++        fi
++        if ! grep "\[ *$rclone_dst *\]" $rclone_config >/dev/null 2>&1
++        then
++            end_die "$rclone_config file is missing source anchor $rclone_dst"
++        fi
++        # If the file exists, have the base64 of the file storage in the variable for k8s jobs
++        BASE64_RCLONE_CONFIG=$(base64 -w 0 $rclone_config)
++        # With rclone, use the / as the source because the FPART partition file contains absolute paths.
++        FPART_JOBCOMMAND="/bin/sh -c '${SUDO} ${TOOL_BIN} ${OPT_TOOL} \
++            ${TOOL_MODEOPTS} --files-from=\\\"\${FPART_PARTFILENAME}\\\" copy \
++            \\\"/\\\" \
++            \\\"${OPT_DSTURL}/\\\"' \
++            1>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stdout\" \
++            2>\"${FPART_LOGDIR}/\${FPART_PARTNUMBER}.stderr\""
++        ;;
+     "cpio")
+         # XXX Warning: -0 and --quiet are non-standard
+         # (not supported on Solaris), see:
+@@ -373,9 +405,26 @@
+ parse_opts () {
+     local opt OPTARG OPTIND
+ 
+-    while getopts "m:n:f:s:Ew:d:t:M:plr:Ra:D:o:O:Svh" opt
++    while getopts "m:n:f:s:EKw:k:d:t:M:plr:Ra:D:o:O:Svh" opt
+     do
+         case "${opt}" in
++        "K")
++            # Add options for k8s support
++            OPT_K8S_ENABLED="True"
++            OPT_K8S_IMAGE="fra.ocir.io/fsssolutions/rclone-rsync:latest"
++            OPT_K8S_PVC="lustre-pvc"
++            ;;
++        "k")
++            # k8s option with values
++            k8s_details=${OPTARG}
++            OPT_K8S_IMAGE=$(echo "${k8s_details}" | cut -f1 -d,)
++            OPT_K8S_PVC=$(echo "${k8s_details}" | cut -f2 -d,)
++            if [ -z "${OPT_K8S_PVC}" ] || [ -z "${OPT_K8S_URL}" ] 
++            then
++                end_die "k8s value should be <image_url>,<pvc_name>, Example: -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc"
++            fi
++            OPT_K8S_ENABLED="True"
++            ;;
+         "m")
+             if tool_is_supported "${OPTARG}"
+             then
+@@ -510,6 +559,20 @@
+     done
+     shift $((${OPTIND} - 1))
+ 
++    if [ -n "${OPT_K8S_ENABLED}" ]
++    then
++        [ -n "${OPT_WRKRS}" ] && end_die "Both K8s and workers can not be done at the same time"
++        kubectl version >/dev/null 2>&1
++        if [ "$?" -ne "0" ]
++        then
++            end_die "kubectl is not working"
++        fi
++        cnt=$(kubectl get nodes --no-headers 2>/dev/null| wc -l)
++        if [ "$cnt" -lt "1" ]
++        then
++            end_die "There are not enough worker nodes available."
++        fi
++    fi
+     # Validate OPT_FPSHDIR (shared directory)
+     if [ -z "${OPT_WRKRS}" ]
+     then
+@@ -653,7 +716,7 @@
+             _WORK_NUM="$((${_WORK_NUM} + 1))"
+         # If not, put its worker to the free list
+         else
+-            echo_log "2" "<= [QMGR] Job ${_JOB} finished"
++            echo_log "1" "<= [QMGR] Job ${_JOB} finished"
+             if [ -n "${OPT_WRKRS}" ]
+             then
+                 WORK_FREEWORKERS="${WORK_FREEWORKERS} $(echo ${_JOB} | cut -d ':' -f 3)"
+@@ -767,6 +830,12 @@
+         done
+         # Wait for child processes to exit and let parent process end_die()
+         wait
++        if [ -n "${OPT_K8S_ENABLED}" ]
++        then
++            job_name=$(echo ${_JOB} | cut -f3 -d:)
++#            kubectl delete job $job_name >/dev/null 2>&1
++            echo_log "1" "===> Deleted k8s job $job_name"
++        fi
+     fi
+ }
+ 
+@@ -794,6 +863,7 @@
+         _run_time_remaining="$(( (${_run_elapsed_time} * ${_jobs_remaining}) / ${_run_jobs_done} ))"
+     fi
+ 
++    local _ts=$(date)
+     echo "${_ts} <===   Parts done: ${_jobs_done}/${_jobs_total} (${_jobs_percent}%), remaining: ${_jobs_remaining}"
+     echo "${_ts} <=== Time elapsed: ${_run_elapsed_time}s, remaining: ~${_run_time_remaining}s (~${_run_time_per_job}s/job)"
+ }
+@@ -822,9 +892,68 @@
+     fi
+ }
+ 
++# Start the k8s job and wait until completion or failure
++start_k8s_job () {
++    job_id=$1
++    k8s_job_name=$2
++    k8s_spec_file="/tmp/fpsync/${k8s_job_name}.yml"
++    echo_log "1" "===> Using kubectl to start job $k8s_job_name with $k8s_spec_file"
++cat >$k8s_spec_file <<EOF
++apiVersion: batch/v1
++kind: Job
++metadata:
++    name: ${k8s_job_name}
++spec:
++    template:
++        spec:
++            containers:
++            - name: ${k8s_job_name}
++              image: ${OPT_K8S_IMAGE}
++              env:
++              - name: FPART_JOBCOMMAND
++                value: $(cat ${JOBS_WORKDIR}/${job_id})
++              - name: BASE64_RCLONE_CONFIG
++                value: "${BASE64_RCLONE_CONFIG}"
++              volumeMounts:
++              - name: lustre-volume
++                mountPath: "/$(echo ${OPT_SRCDIR} | cut -f2 -d/)"
++            restartPolicy: Never
++            volumes:
++            - name: lustre-volume
++              persistentVolumeClaim:
++                claimName: ${OPT_K8S_PVC}
++EOF
++    kubectl create -f  $k8s_spec_file >/dev/null 2>&1
++    while true
++    do
++        job_running=True
++        sleep 1
++        job_status=$(kubectl describe job $k8s_job_name | grep "Pods Statuses:" 2>/dev/null)
++        if [ -z "$job_status" ]
++        then
++            echo_log "1" "<= [QMGR] ERROR: $k8s_job_name didn't start"
++            job_running="False"
++        elif echo "$job_status" | grep  "/ 1 Succeeded /" >/dev/null
++        then
++            echo_log "1" "<= [QMGR] k8s job $k8s_job_name complete"
++            job_running="False"
++        elif echo "$job_status" | grep -v "/ 0 Failed" >/dev/null
++        then
++            echo_log "1" "<= [QMGR] ERROR: one of the pods for $k8s_job_name failed"
++            job_running="False"
++        fi
++        if [ "$job_running" = "False" ]
++        then
++#            kubectl delete job $k8s_job_name >/dev/null 2>&1
++            echo_log "1" "<= [QMGR] Deleting k8s job $k8s_job_name"
++            break
++        fi
++    done
++}
++
+ # Main jobs' loop: pick up jobs within the queue directory and start them
+ job_queue_loop () {
+-    echo_log "2" "===> [QMGR] Starting queue manager"
++    echo_log "1" "===> [QMGR] Starting queue manager"
+ 
+     # Trap SIGINT
+     trap 'job_queue_loop_sigint_handler' 2
+@@ -844,13 +973,20 @@
+             then
+                 if [ -z "${OPT_WRKRS}" ]
+                 then
+-                    echo_log "2" "=> [QMGR] Starting job ${JOBS_WORKDIR}/${_NEXT} (local)"
+-                    /bin/sh "${JOBS_WORKDIR}/${_NEXT}" &
+-                    work_list_push "$!:${_NEXT}:local"
++                    echo_log "1" "=> [QMGR] Starting job ${JOBS_WORKDIR}/${_NEXT} (local)"
++		    if [ -n "${OPT_K8S_ENABLED}" ]
++                    then
++                        k8s_job_name="${OPT_TOOL_NAME}-$(basename ${JOBS_WORKDIR})-${_NEXT}"
++                        start_k8s_job "${_NEXT}" "${k8s_job_name}" &
++                        work_list_push "$!:${_NEXT}:${k8s_job_name}"
++	            else
++                        /bin/sh "${JOBS_WORKDIR}/${_NEXT}" &
++                        work_list_push "$!:${_NEXT}:local"
++		    fi
+                 else
+                     local _NEXT_HOST="$(work_list_pick_next_free_worker)"
+                     work_list_trunc_next_free_worker
+-                    echo_log "2" "=> [QMGR] Starting job ${JOBS_WORKDIR}/${_NEXT} -> ${_NEXT_HOST}"
++                    echo_log "1" "=> [QMGR] Starting job ${JOBS_WORKDIR}/${_NEXT} -> ${_NEXT_HOST}"
+                     "${SSH_BIN}" "${_NEXT_HOST}" '/bin/sh -s' \
+                         < "${JOBS_WORKDIR}/${_NEXT}" &
+                     work_list_push "$!:${_NEXT}:${_NEXT_HOST}"
+@@ -863,12 +999,14 @@
+ 
+     if [ "${_NEXT}" = "fp_done" ]
+     then
+-        echo_log "2" "<=== [QMGR] Done submitting jobs. Waiting for them to finish."
++        echo_log "1" "<=== [QMGR] Done submitting jobs. Waiting for them to finish."
+     else
+-        echo_log "2" "<=== [QMGR] Stopped. Waiting for jobs to finish."
++        echo_log "1" "<=== [QMGR] Stopped. Waiting for jobs to finish."
+     fi
+     wait
+-    echo_log "2" "<=== [QMGR] Queue processed"
++    # Call work list refresh here to take care of the last process that is running. just a clean approach.
++    work_list_refresh
++    echo_log "1" "<=== [QMGR] Queue processed"
+ 
+     # Set the 'sl_done' (sync done) flag to let the master process go
+     job_queue_sl_done
+@@ -1123,7 +1261,7 @@
+ # presence (this also allows checking SSH connectivity to each declared host)
+ if [ -n "${OPT_WRKRS}" ]
+ then
+-    echo_log "2" "=====> Validating requirements on SSH nodes..."
++    echo_log "1" "=====> Validating requirements on SSH nodes..."
+ 
+     _FIRST_HOST="$(echo ${OPT_WRKRS} | awk '{print $1}')"
+     for _host in ${OPT_WRKRS}
+@@ -1164,7 +1302,7 @@
+         "${SSH_BIN}" "${_host}" "/bin/sh -c '[ -x \"${TOOL_BIN}\" ]'" || \
+             end_die "Tool ${OPT_TOOL_NAME} not useable on target ${_host}: ${TOOL_BIN} not found"
+ 
+-        echo_log "2" "<=== ${_host}: OK"
++        echo_log "1" "<=== ${_host}: OK"
+     done
+ 
+     # Remove witness file
+@@ -1190,21 +1328,21 @@
+ work_list_free_workers_init
+ 
+ # Let's rock !
+-echo_log "2" "=====> [$$] Syncing ${OPT_SRCDIR} => ${OPT_DSTURL}"
++echo_log "1" "=====> [$$] Syncing ${OPT_SRCDIR} => ${OPT_DSTURL}"
+ echo_log "1" "===> Run ID: ${FPART_RUNID}$([ -n "${OPT_RUNID}" ] && echo ' (resumed)')"
+-echo_log "2" "===> Start time: $(date)"
+-echo_log "2" "===> Concurrent sync jobs: ${OPT_JOBS}"
+-echo_log "2" "===> Workers: $(echo "${OPT_WRKRS}" | sed -E -e 's/^[[:space:]]+//' -e 's/[[:space:]]+/ /g')$([ -z "${OPT_WRKRS}" ] && echo 'local')"
+-echo_log "2" "===> Shared dir: ${OPT_FPSHDIR}"
+-echo_log "2" "===> Temp dir: ${OPT_TMPDIR}"
+-echo_log "2" "===> Tool name: \"${OPT_TOOL_NAME}\""
++echo_log "1" "===> Start time: $(date)"
++echo_log "1" "===> Concurrent sync jobs: ${OPT_JOBS}"
++echo_log "1" "===> Workers: $(echo "${OPT_WRKRS}" | sed -E -e 's/^[[:space:]]+//' -e 's/[[:space:]]+/ /g')$([ -z "${OPT_WRKRS}" ] && echo 'local')"
++echo_log "1" "===> Shared dir: ${OPT_FPSHDIR}"
++echo_log "1" "===> Temp dir: ${OPT_TMPDIR}"
++echo_log "1" "===> Tool name: \"${OPT_TOOL_NAME}\""
+ # The following options are ignored when resuming
+ if [ -z "${OPT_RUNID}" ]
+ then
+-    echo_log "2" "===> Tool options: \"${OPT_TOOL}\""
+-    echo_log "2" "===> Fpart options: \"${OPT_FPART}\""
+-    echo_log "2" "===> Max files or directories per sync job: ${OPT_FPMAXPARTFILES}"
+-    echo_log "2" "===> Max bytes per sync job: ${OPT_FPMAXPARTSIZE}"
++    echo_log "1" "===> Tool options: \"${OPT_TOOL}\""
++    echo_log "1" "===> Fpart options: \"${OPT_FPART}\""
++    echo_log "1" "===> Max files or directories per sync job: ${OPT_FPMAXPARTFILES}"
++    echo_log "1" "===> Max bytes per sync job: ${OPT_FPMAXPARTSIZE}"
+ fi
+ 
+ # Record run information
+@@ -1220,7 +1358,7 @@
+     # Set SIGINT and SIGINFO traps and start job_queue_loop
+     trap 'sigint_handler' 2
+     trap 'siginfo_handler' 29
+-    echo_log "2" "===> Use ^C to abort, ^T (SIGINFO) to display status"
++    echo_log "1" "===> Use ^C to abort, ^T (SIGINFO) to display status"
+     job_queue_loop&
+ fi
+ 
+@@ -1240,14 +1378,26 @@
+         IFS="|"
+ 
+         echo_log "1" "===> Analyzing filesystem..."
++        
++	# When invoking rclone, the source option to pass to fpart is different
++	if [ "$OPT_TOOL_NAME" = "rclone" ]
++	then
++	    WORK_DIR=`pwd`
++	    SRC_DIR=$OPT_SRCDIR
++	else
++	    WORK_DIR=$OPT_SRCDIR
++	    SRC_DIR="."
++	fi
++
+         # Start fpart from src_dir/ directory and produce jobs within
+         # ${JOBS_QUEUEDIR}/
+-        cd "${OPT_SRCDIR}" && \
++        # Remove -0 to avoid null terminated file names. Compatibility with rclone
++        cd "${WORK_DIR}" && \
+             ${SUDO} "${FPART_BIN}" \
+             $([ ${OPT_FPMAXPARTFILES} -gt 0 ] && printf '%s\n' "-f ${OPT_FPMAXPARTFILES}") \
+             $({ { is_num "${OPT_FPMAXPARTSIZE}" && [ ${OPT_FPMAXPARTSIZE} -gt 0 ] ;} || is_size "${OPT_FPMAXPARTSIZE}" ;} && printf '%s\n' "-s ${OPT_FPMAXPARTSIZE}") \
+-            -o "${FPART_PARTSTMPL}" -0 -e ${OPT_FPART} ${FPART_MODEOPTS} -L \
+-            -W "${FPART_POSTHOOK}" . 2>&1 | \
++            -o "${FPART_PARTSTMPL}" -e ${OPT_FPART} ${FPART_MODEOPTS} -L \
++            -W "${FPART_POSTHOOK}" ${SRC_DIR} 2>&1 | \
+             tee -a "${FPART_LOGFILE}"
+     )
+ 
+@@ -1281,10 +1431,12 @@
+     _report_subj="Fpsync run ${FPART_RUNID}"
+ fi
+ _report_logs=$(find "${FPART_LOGDIR}/" -name "*.stderr" ! -size 0)
++# Also include any errors in the FPART log file
++[ -z "${_report_logs}" ] && _report_logs=$(grep -l ERROR ${FPART_LOGFILE})
+ _report_body=$( { [ -z "${_report_logs}" ] && echo 'Fpsync completed without error.' ;} || \
+     { echo "Fpsync completed with errors, see logs:" && echo "${_report_logs}" ;} )
+ echo_log "1" "<=== ${_report_body}"
+-echo_log "2" "<=== End time: $(date)"
++echo_log "1" "<=== End time: $(date)"
+ [ -n "${OPT_MAIL}" ] && \
+     echo "${_report_body}" | ${MAIL_BIN} -s "${_report_subj}" ${OPT_MAIL}
+ 

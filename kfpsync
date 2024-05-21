@@ -169,7 +169,6 @@ end_die () {
 # $1 = level (0 = quiet, 1 = verbose, >=2 more verbose)
 # $2 = message to log
 echo_log () {
-#    local _ts=$(date '+%s')
     local _ts=$(date)
     is_num "$1" && [ ${OPT_VERBOSE} -ge $1 ] && [ -n "$2" ] && \
         echo "${_ts} $2"

@@ -1,0 +1,121 @@
+root@e5-dense-1:~# PART_SIZE=512 && ./kfpsync -v -K  -d /data/fpsync  -f $PART_SIZE -n 2 /data/src/ /data/dst
+
+Tue May 21 03:24:00 UTC 2024 ===> Run ID: 1716261840-569780
+Tue May 21 03:24:00 UTC 2024 ===> Analyzing filesystem...
+Tue May 21 03:24:00 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-0 with /tmp/fpsync/rsync-1716261840-569780-0.yml
+Tue May 21 03:24:00 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-2 with /tmp/fpsync/rsync-1716261840-569780-2.yml
+Tue May 21 03:24:01 UTC 2024 ===> Waiting for sync jobs to complete...
+Tue May 21 03:24:08 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-0 complete
+Tue May 21 03:24:08 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-0
+Tue May 21 03:24:08 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-2 complete
+Tue May 21 03:24:08 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-2
+Tue May 21 03:24:08 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-1 with /tmp/fpsync/rsync-1716261840-569780-1.yml
+Tue May 21 03:24:08 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-3 with /tmp/fpsync/rsync-1716261840-569780-3.yml
+Tue May 21 03:24:16 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-1 complete
+Tue May 21 03:24:16 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-1
+Tue May 21 03:24:16 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-3 complete
+Tue May 21 03:24:16 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-3
+Tue May 21 03:24:16 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-5 with /tmp/fpsync/rsync-1716261840-569780-5.yml
+Tue May 21 03:24:17 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-4 with /tmp/fpsync/rsync-1716261840-569780-4.yml
+Tue May 21 03:24:24 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-5 complete
+Tue May 21 03:24:24 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-5
+Tue May 21 03:24:24 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-7 with /tmp/fpsync/rsync-1716261840-569780-7.yml
+Tue May 21 03:24:25 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-4 complete
+Tue May 21 03:24:25 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-4
+Tue May 21 03:24:25 UTC 2024 ===> Using kubectl to start job rsync-1716261840-569780-6 with /tmp/fpsync/rsync-1716261840-569780-6.yml
+Tue May 21 03:24:32 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-7 complete
+Tue May 21 03:24:32 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-7
+Tue May 21 03:24:33 UTC 2024 <= [QMGR] k8s job rsync-1716261840-569780-6 complete
+Tue May 21 03:24:33 UTC 2024 <= [QMGR] Deleting k8s job rsync-1716261840-569780-6
+Tue May 21 03:24:33 UTC 2024 <===   Parts done: 8/8 (100%), remaining: 0
+Tue May 21 03:24:33 UTC 2024 <=== Time elapsed: 33s, remaining: ~0s (~4s/job)
+Tue May 21 03:24:33 UTC 2024 <=== Fpsync completed without error.
+
+
+root@e5-dense-1:~# PART_SIZE=512 && ./kfpsync -v  -d /data/fpsync  -f $PART_SIZE -n 2 -w "worker-1" /data/src/ /data/dst
+Tue May 21 03:37:12 UTC 2024 =====> Validating requirements on SSH nodes...
+Tue May 21 03:37:13 UTC 2024 <=== worker-1: OK
+Tue May 21 03:37:13 UTC 2024 =====> [598213] Syncing /data/src/ => /data/dst
+Tue May 21 03:37:13 UTC 2024 ===> Run ID: 1716262631-598213
+Tue May 21 03:37:13 UTC 2024 ===> Start time: Tue May 21 03:37:13 UTC 2024
+Tue May 21 03:37:13 UTC 2024 ===> Concurrent sync jobs: 2
+Tue May 21 03:37:13 UTC 2024 ===> Workers: worker-1
+Tue May 21 03:37:13 UTC 2024 ===> Shared dir: /data/fpsync
+Tue May 21 03:37:13 UTC 2024 ===> Temp dir: /tmp/fpsync
+Tue May 21 03:37:13 UTC 2024 ===> Tool name: "rsync"
+Tue May 21 03:37:13 UTC 2024 ===> Tool options: "-lptgoD -v --numeric-ids"
+Tue May 21 03:37:13 UTC 2024 ===> Fpart options: "-x|.zfs|-x|.snapshot*|-x|.ckpt"
+Tue May 21 03:37:13 UTC 2024 ===> Max files or directories per sync job: 512
+Tue May 21 03:37:13 UTC 2024 ===> Max bytes per sync job: 
+Tue May 21 03:37:13 UTC 2024 ===> Use ^C to abort, ^T (SIGINFO) to display status
+Tue May 21 03:37:13 UTC 2024 ===> [QMGR] Starting queue manager
+Tue May 21 03:37:13 UTC 2024 ===> Analyzing filesystem...
+Tue May 21 03:37:13 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/1 -> worker-1
+Tue May 21 03:37:14 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/0 -> worker-1
+Tue May 21 03:37:14 UTC 2024 <= [QMGR] Job 598640:1:worker-1 finished
+Tue May 21 03:37:14 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/2 -> worker-1
+Tue May 21 03:37:14 UTC 2024 <= [QMGR] Job 598713:0:worker-1 finished
+Tue May 21 03:37:14 UTC 2024 ===> Waiting for sync jobs to complete...
+Tue May 21 03:37:14 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/4 -> worker-1
+Tue May 21 03:37:14 UTC 2024 <= [QMGR] Job 598796:2:worker-1 finished
+Tue May 21 03:37:15 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/3 -> worker-1
+Tue May 21 03:37:15 UTC 2024 <= [QMGR] Job 598885:4:worker-1 finished
+Tue May 21 03:37:15 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/6 -> worker-1
+Tue May 21 03:37:15 UTC 2024 <= [QMGR] Job 598971:3:worker-1 finished
+Tue May 21 03:37:15 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/5 -> worker-1
+Tue May 21 03:37:16 UTC 2024 <= [QMGR] Job 599056:6:worker-1 finished
+Tue May 21 03:37:16 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262631-598213/7 -> worker-1
+Tue May 21 03:37:16 UTC 2024 <= [QMGR] Job 599141:5:worker-1 finished
+Tue May 21 03:37:16 UTC 2024 <= [QMGR] Job 599226:7:worker-1 finished
+Tue May 21 03:37:16 UTC 2024 <=== [QMGR] Done submitting jobs. Waiting for them to finish.
+Tue May 21 03:37:16 UTC 2024 <=== [QMGR] Queue processed
+Tue May 21 03:37:17 UTC 2024 <===   Parts done: 8/8 (100%), remaining: 0
+Tue May 21 03:37:17 UTC 2024 <=== Time elapsed: 4s, remaining: ~0s (~0s/job)
+Tue May 21 03:37:17 UTC 2024 <=== Fpsync completed without error.
+Tue May 21 03:37:17 UTC 2024 <=== End time: Tue May 21 03:37:17 UTC 2024
+root@e5-dense-1:~#
+
+
+
+root@e5-dense-1:~# PART_SIZE=512 && ./kfpsync  -v  -d /data/fpsync  -f $PART_SIZE -n 2 /data/src/ /data/dst
+Tue May 21 03:39:06 UTC 2024 =====> [603906] Syncing /data/src/ => /data/dst
+Tue May 21 03:39:06 UTC 2024 ===> Run ID: 1716262746-603906
+Tue May 21 03:39:06 UTC 2024 ===> Start time: Tue May 21 03:39:06 UTC 2024
+Tue May 21 03:39:06 UTC 2024 ===> Concurrent sync jobs: 2
+Tue May 21 03:39:06 UTC 2024 ===> Workers: local
+Tue May 21 03:39:06 UTC 2024 ===> Shared dir: /data/fpsync
+Tue May 21 03:39:06 UTC 2024 ===> Temp dir: /tmp/fpsync
+Tue May 21 03:39:06 UTC 2024 ===> Tool name: "rsync"
+Tue May 21 03:39:06 UTC 2024 ===> Tool options: "-lptgoD -v --numeric-ids"
+Tue May 21 03:39:06 UTC 2024 ===> Fpart options: "-x|.zfs|-x|.snapshot*|-x|.ckpt"
+Tue May 21 03:39:06 UTC 2024 ===> Max files or directories per sync job: 512
+Tue May 21 03:39:06 UTC 2024 ===> Max bytes per sync job: 
+Tue May 21 03:39:06 UTC 2024 ===> Use ^C to abort, ^T (SIGINFO) to display status
+Tue May 21 03:39:06 UTC 2024 ===> [QMGR] Starting queue manager
+Tue May 21 03:39:06 UTC 2024 ===> Analyzing filesystem...
+Tue May 21 03:39:06 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/1 (local)
+Tue May 21 03:39:06 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/0 (local)
+Tue May 21 03:39:07 UTC 2024 <= [QMGR] Job 604039:1:local finished
+Tue May 21 03:39:07 UTC 2024 <= [QMGR] Job 604058:0:local finished
+Tue May 21 03:39:07 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/3 (local)
+Tue May 21 03:39:07 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/2 (local)
+Tue May 21 03:39:07 UTC 2024 ===> Waiting for sync jobs to complete...
+Tue May 21 03:39:07 UTC 2024 <= [QMGR] Job 604087:3:local finished
+Tue May 21 03:39:07 UTC 2024 <= [QMGR] Job 604106:2:local finished
+Tue May 21 03:39:07 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/5 (local)
+Tue May 21 03:39:08 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/4 (local)
+Tue May 21 03:39:08 UTC 2024 <= [QMGR] Job 604141:5:local finished
+Tue May 21 03:39:08 UTC 2024 <= [QMGR] Job 604161:4:local finished
+Tue May 21 03:39:08 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/6 (local)
+Tue May 21 03:39:08 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262746-603906/7 (local)
+Tue May 21 03:39:08 UTC 2024 <= [QMGR] Job 604192:6:local finished
+Tue May 21 03:39:08 UTC 2024 <= [QMGR] Job 604212:7:local finished
+Tue May 21 03:39:09 UTC 2024 <=== [QMGR] Done submitting jobs. Waiting for them to finish.
+Tue May 21 03:39:09 UTC 2024 <=== [QMGR] Queue processed
+Tue May 21 03:39:09 UTC 2024 <===   Parts done: 8/8 (100%), remaining: 0
+Tue May 21 03:39:09 UTC 2024 <=== Time elapsed: 3s, remaining: ~0s (~0s/job)
+Tue May 21 03:39:09 UTC 2024 <=== Fpsync completed without error.
+Tue May 21 03:39:09 UTC 2024 <=== End time: Tue May 21 03:39:09 UTC 2024
+root@e5-dense-1:~#
+
+

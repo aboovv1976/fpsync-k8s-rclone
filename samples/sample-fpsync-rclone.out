@@ -1,0 +1,130 @@
+root@e5-dense-1:~# PART_SIZE=512 && ./kfpsync -v -K  -m rclone -d /data/fpsync  -f $PART_SIZE -n 2 -o "--oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --multi-thread-streams 64 --transfers $PART_SIZE  --oos-upload-concurrency 8 --oos-disable-checksum  --oos-leave-parts-on-error" /data/src/ rclone:rclone-2
+Tue May 21 03:18:34 UTC 2024 ===> Run ID: 1716261514-560433
+Tue May 21 03:18:34 UTC 2024 ===> Analyzing filesystem...
+Tue May 21 03:18:34 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-1 with /tmp/fpsync/rclone-1716261514-560433-1.yml
+Tue May 21 03:18:34 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-0 with /tmp/fpsync/rclone-1716261514-560433-0.yml
+Tue May 21 03:18:35 UTC 2024 ===> Waiting for sync jobs to complete...
+Tue May 21 03:18:46 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-0 complete
+Tue May 21 03:18:46 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-0
+Tue May 21 03:18:46 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-3 with /tmp/fpsync/rclone-1716261514-560433-3.yml
+Tue May 21 03:18:47 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-1 complete
+Tue May 21 03:18:47 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-1
+Tue May 21 03:18:48 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-2 with /tmp/fpsync/rclone-1716261514-560433-2.yml
+Tue May 21 03:18:57 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-3 complete
+Tue May 21 03:18:57 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-3
+Tue May 21 03:18:58 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-4 with /tmp/fpsync/rclone-1716261514-560433-4.yml
+Tue May 21 03:19:01 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-2 complete
+Tue May 21 03:19:01 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-2
+Tue May 21 03:19:01 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-6 with /tmp/fpsync/rclone-1716261514-560433-6.yml
+Tue May 21 03:19:09 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-4 complete
+Tue May 21 03:19:09 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-4
+Tue May 21 03:19:10 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-5 with /tmp/fpsync/rclone-1716261514-560433-5.yml
+Tue May 21 03:19:12 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-6 complete
+Tue May 21 03:19:12 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-6
+Tue May 21 03:19:13 UTC 2024 ===> Using kubectl to start job rclone-1716261514-560433-7 with /tmp/fpsync/rclone-1716261514-560433-7.yml
+Tue May 21 03:19:21 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-5 complete
+Tue May 21 03:19:21 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-5
+Tue May 21 03:19:24 UTC 2024 <= [QMGR] k8s job rclone-1716261514-560433-7 complete
+Tue May 21 03:19:24 UTC 2024 <= [QMGR] Deleting k8s job rclone-1716261514-560433-7
+Tue May 21 03:19:24 UTC 2024 <===   Parts done: 8/8 (100%), remaining: 0
+Tue May 21 03:19:24 UTC 2024 <=== Time elapsed: 50s, remaining: ~0s (~6s/job)
+Tue May 21 03:19:24 UTC 2024 <=== Fpsync completed without error.
+root@e5-dense-1:~# 
+
+root@e5-dense-1:~/rclone-image# kubectl get jobs
+NAME                         COMPLETIONS   DURATION   AGE
+rclone-1716261514-560433-0   0/1           8s         8s
+rclone-1716261514-560433-1   0/1           7s         7s
+root@e5-dense-1:~/rclone-image# kubectl get pods
+NAME                                          READY   STATUS      RESTARTS   AGE
+rclone-1716261514-560433-0-8t97c              0/1     Completed   0          10s
+rclone-1716261514-560433-1-2dkfn              1/1     Running     0          9s
+root@e5-dense-1:~/rclone-image# 
+
+
+iroot@e5-dense-1:~# PART_SIZE=512 && ./kfpsync -v -m rclone -d /data/fpsync  -f $PART_SIZE -n 2 -o "--oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --multi-thread-streams 64 --transfers $PART_SIZE  --oos-upload-concurrency 8 --oos-disable-checksum  --oos-leave-parts-on-error" /data/src/ rclone:rclone-2
+Tue May 21 03:31:33 UTC 2024 =====> [584674] Syncing /data/src/ => rclone:rclone-2
+Tue May 21 03:31:33 UTC 2024 ===> Run ID: 1716262293-584674
+Tue May 21 03:31:33 UTC 2024 ===> Start time: Tue May 21 03:31:33 UTC 2024
+Tue May 21 03:31:33 UTC 2024 ===> Concurrent sync jobs: 2
+Tue May 21 03:31:33 UTC 2024 ===> Workers: local
+Tue May 21 03:31:33 UTC 2024 ===> Shared dir: /data/fpsync
+Tue May 21 03:31:33 UTC 2024 ===> Temp dir: /tmp/fpsync
+Tue May 21 03:31:33 UTC 2024 ===> Tool name: "rclone"
+Tue May 21 03:31:33 UTC 2024 ===> Tool options: "--oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --multi-thread-streams 64 --transfers 512  --oos-upload-concurrency 8 --oos-disable-checksum  --oos-leave-parts-on-error"
+Tue May 21 03:31:33 UTC 2024 ===> Fpart options: "-x|.zfs|-x|.snapshot*|-x|.ckpt"
+Tue May 21 03:31:33 UTC 2024 ===> Max files or directories per sync job: 512
+Tue May 21 03:31:33 UTC 2024 ===> Max bytes per sync job: 
+Tue May 21 03:31:33 UTC 2024 ===> Use ^C to abort, ^T (SIGINFO) to display status
+Tue May 21 03:31:33 UTC 2024 ===> [QMGR] Starting queue manager
+Tue May 21 03:31:33 UTC 2024 ===> Analyzing filesystem...
+Tue May 21 03:31:33 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/1 (local)
+Tue May 21 03:31:33 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/0 (local)
+Tue May 21 03:31:34 UTC 2024 ===> Waiting for sync jobs to complete...
+Tue May 21 03:31:34 UTC 2024 <= [QMGR] Job 584823:1:local finished
+Tue May 21 03:31:35 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/3 (local)
+Tue May 21 03:31:35 UTC 2024 <= [QMGR] Job 584873:0:local finished
+Tue May 21 03:31:35 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/2 (local)
+Tue May 21 03:31:36 UTC 2024 <= [QMGR] Job 586175:3:local finished
+Tue May 21 03:31:36 UTC 2024 <= [QMGR] Job 586484:2:local finished
+Tue May 21 03:31:36 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/4 (local)
+Tue May 21 03:31:37 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/6 (local)
+Tue May 21 03:31:38 UTC 2024 <= [QMGR] Job 587581:4:local finished
+Tue May 21 03:31:38 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/5 (local)
+Tue May 21 03:31:38 UTC 2024 <= [QMGR] Job 587789:6:local finished
+Tue May 21 03:31:38 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262293-584674/7 (local)
+Tue May 21 03:31:40 UTC 2024 <= [QMGR] Job 589267:5:local finished
+Tue May 21 03:31:40 UTC 2024 <= [QMGR] Job 589332:7:local finished
+Tue May 21 03:31:40 UTC 2024 <=== [QMGR] Done submitting jobs. Waiting for them to finish.
+Tue May 21 03:31:40 UTC 2024 <=== [QMGR] Queue processed
+Tue May 21 03:31:40 UTC 2024 <===   Parts done: 8/8 (100%), remaining: 0
+Tue May 21 03:31:40 UTC 2024 <=== Time elapsed: 7s, remaining: ~0s (~0s/job)
+Tue May 21 03:31:40 UTC 2024 <=== Fpsync completed without error.
+Tue May 21 03:31:40 UTC 2024 <=== End time: Tue May 21 03:31:40 UTC 2024
+root@e5-dense-1:~# 
+
+
+
+
+root@e5-dense-1:~# PART_SIZE=512 && ./kfpsync -v -m rclone -d /data/fpsync  -f $PART_SIZE -n 2 -w "worker-1"  -o "--oos-no-check-bucket --oos-upload-cutoff 1
+0Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --multi-thread-streams 64 --transfers $PART_SIZE  --oos-upload-concurrency 8 --oos-disable-checksum  --oos-leave-parts-on-error" /data/src/ rclone:rclone-2
+Tue May 21 03:33:44 UTC 2024 =====> Validating requirements on SSH nodes...
+Tue May 21 03:33:45 UTC 2024 <=== worker-1: OK
+Tue May 21 03:33:45 UTC 2024 =====> [590633] Syncing /data/src/ => rclone:rclone-2                                                                          
+Tue May 21 03:33:45 UTC 2024 ===> Run ID: 1716262424-590633
+Tue May 21 03:33:45 UTC 2024 ===> Start time: Tue May 21 03:33:45 UTC 2024
+Tue May 21 03:33:45 UTC 2024 ===> Concurrent sync jobs: 2
+Tue May 21 03:33:45 UTC 2024 ===> Workers: worker-1
+Tue May 21 03:33:45 UTC 2024 ===> Shared dir: /data/fpsync
+Tue May 21 03:33:45 UTC 2024 ===> Temp dir: /tmp/fpsync
+Tue May 21 03:33:45 UTC 2024 ===> Tool name: "rclone"
+Tue May 21 03:33:45 UTC 2024 ===> Tool options: "--oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --m$lti-thread-streams 64 --transfers 512  --oos-upload-concurrency 8 --oos-disable-checksum  --oos-leave-parts-on-error"                                       
+Tue May 21 03:33:45 UTC 2024 ===> Fpart options: "-x|.zfs|-x|.snapshot*|-x|.ckpt"                                                                           
+Tue May 21 03:33:45 UTC 2024 ===> Max files or directories per sync job: 512
+Tue May 21 03:33:45 UTC 2024 ===> Max bytes per sync job:
+Tue May 21 03:33:45 UTC 2024 ===> Use ^C to abort, ^T (SIGINFO) to display status                                                                           
+Tue May 21 03:33:45 UTC 2024 ===> [QMGR] Starting queue manager
+Tue May 21 03:33:45 UTC 2024 ===> Analyzing filesystem...
+Tue May 21 03:33:45 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/0 -> worker-1                                                        
+Tue May 21 03:33:46 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/1 -> worker-1                                                        
+Tue May 21 03:33:46 UTC 2024 ===> Waiting for sync jobs to complete...
+Tue May 21 03:33:47 UTC 2024 <= [QMGR] Job 590953:0:worker-1 finished
+Tue May 21 03:33:47 UTC 2024 <= [QMGR] Job 591058:1:worker-1 finished
+Tue May 21 03:33:47 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/3 -> worker-1                                                        
+Tue May 21 03:33:48 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/2 -> worker-1                                                        
+Tue May 21 03:33:49 UTC 2024 <= [QMGR] Job 592505:3:worker-1 finished
+Tue May 21 03:33:49 UTC 2024 <= [QMGR] Job 592609:2:worker-1 finished
+Tue May 21 03:33:49 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/4 -> worker-1                                                        
+Tue May 21 03:33:50 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/6 -> worker-1                                                        
+Tue May 21 03:33:51 UTC 2024 <= [QMGR] Job 594047:4:worker-1 finished
+Tue May 21 03:33:51 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/5 -> worker-1                                                        
+Tue May 21 03:33:51 UTC 2024 <= [QMGR] Job 594153:6:worker-1 finished
+Tue May 21 03:33:51 UTC 2024 => [QMGR] Starting job /tmp/fpsync/work/1716262424-590633/7 -> worker-1                                                        
+Tue May 21 03:33:53 UTC 2024 <= [QMGR] Job 595472:5:worker-1 finished
+Tue May 21 03:33:53 UTC 2024 <=== [QMGR] Done submitting jobs. Waiting for them to finish.                                                                  
+Tue May 21 03:33:53 UTC 2024 <= [QMGR] Job 595584:7:worker-1 finished
+Tue May 21 03:33:53 UTC 2024 <=== [QMGR] Queue processed
+Tue May 21 03:33:53 UTC 2024 <===   Parts done: 8/8 (100%), remaining: 0
+Tue May 21 03:33:53 UTC 2024 <=== Time elapsed: 8s, remaining: ~0s (~1s/job)
+Tue May 21 03:33:53 UTC 2024 <=== Fpsync completed without error.
+Tue May 21 03:33:53 UTC 2024 <=== End time: Tue May 21 03:33:53 UTC 2024
