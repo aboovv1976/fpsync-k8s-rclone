@@ -92,7 +92,7 @@ The *sample* directory contains some examples and k8s job spec file.
 
 # Running k-fpsync
 
-The patched fpsync (k-fpsync) can partition the source file system and scale out the transfer using multiple Kubernetes pods. The Kubernetes [pod affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/) can be configured to control how many pods are started per node. This requires modification in fpsync to add the the affinity in the job spec file. 
+The patched fpsync (k-fpsync) can partition the source file system and scale out the transfer using multiple Kubernetes pods. The Kubernetes [pod antiaffinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/) rule is configured to prefer nodes that doesn't have any running tranfer worker pods. This helps to utilize the bandwidth on the nodes effectively to optimize performance. 
 
 Mount the source file system on the fpart operator host and create a shared directory that will be accessed by all the pods. This is directory where all the logs file and partition files are kept. 
 
