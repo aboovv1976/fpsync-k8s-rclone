@@ -55,15 +55,15 @@ The fpsync is required to run rclone or rsync in parallel to scale out the data 
 # Running data migration tools
 ## rclone 
 
-rclone can be run as a standalone tool to migrate data to object storage from file system. The following command sends /lst/ml-checkpoints to object storage bucket rclone-3, The chunk sizes is really large here as the files being transfers are big. 
+\# rclone can be run as a standalone tool to migrate data to object storage from file system. The following command sends /lst/ml-checkpoints to object storage bucket rclone-3, The chunk sizes is really large here as the files being transfers are big. 
 
 Example: 
-> rclone  --progress --stats-one-line --max-stats-groups 10   --oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --multi-thread-streams 64 --transfers 64 --checkers 128 --oos-chunk-size 5120Mi --oos-disable-checksum  --oos-attempt-resume-upload --oos-leave-parts-on-error copy /lst/ml-checkpoints/ rclone:rclone-3
+> \# rclone  --progress --stats-one-line --max-stats-groups 10   --oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --multi-thread-streams 64 --transfers 64 --checkers 128 --oos-chunk-size 5120Mi --oos-disable-checksum  --oos-attempt-resume-upload --oos-leave-parts-on-error copy /lst/ml-checkpoints/ rclone:rclone-3
 
 ## rsync
 
 The simplest form of rsync command to copy data from source file system to target file system is:
-> rsync -av /src/foo /dest
+> \# rsync -av /src/foo /dest
 
 ## Running tools as OKE pods 
 
@@ -114,6 +114,5 @@ The above command will make partitions of 2048 files, and run it on two worker n
 Similarly, rsync from one directory to another directory can be invoked using:
 
 > \# ART_NUM_FILES=2048 && kfpsync -v -m rsync -d /lst/fpsync  -f \$PART_NUM_FILES -n 2 -w 'root@worker-1 root@worker-2' /lst/ml-checkpoints/ /dst
-
 
 ### Run multiple data transfer pods
