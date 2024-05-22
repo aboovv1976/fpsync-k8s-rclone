@@ -20,7 +20,7 @@ To scale out data transfers, especially to storage systems that are relative hig
 
  ## rsync - Data Transfer to another POSIX complaint file system
 
- [rsync](https://rsync.samba.org/documentation.html) is a popular tool used to migrate and also to keep the file systems in sync. 
+ [rsync](https://rsync.samba.org/documentation.html) is a popular tool used to migrate file systems. 
 
 # Tool installation
 
