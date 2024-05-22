@@ -2,7 +2,7 @@
 
 This project demonstrate how multiple Kubernetes pods can be used to scale out data transfer between file systems and object storage. 
 
-To scale out data transfers, especially to storage systems that are relative high latency but are high throughput, requires parallelization of data transfers. One method would be to partition the directory structure in to multiple chunks and run the data transfer in parallel, either on the same compute node or across multiple nodes. The pods run on multiple nodes to take advantage of network throughput and compute power each node has. 
+To scale out data transfers, especially to storage systems that are relative high latency but are high throughput, requires parallelization of data transfers. The approach here is to partition the directory structure in to multiple chunks and run the data transfer in parallel, either on the same compute node or across multiple nodes. The running on multiple nodes can take advantage of network throughput and compute power each node has. 
 
 # Tools
 
