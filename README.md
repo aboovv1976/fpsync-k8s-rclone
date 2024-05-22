@@ -12,7 +12,7 @@ To scale out data transfers, especially to storage systems that are relative hig
 
 ## fpsync - Running transfer tools in parallel
 
-[fpsync](http://www.fpart.org/fpsync/) is a wrapper script that wraps fpart to runs the transfer tools (rsync, rclone) in parallel. The fpsync tools run from the fpsync operator host. 
+[fpsync](http://www.fpart.org/fpsync/) is a wrapper script that wraps fpart to runs the transfer tools (rsync, rclone) in parallel. The fpsync is run from the fpsync operator host. 
 
  ## rclone - Data transfer to Object Storage
  
