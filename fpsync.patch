@@ -1,5 +1,5 @@
 --- /usr/bin/fpsync	2021-10-19 19:02:12.000000000 +0000
-+++ kfpsync	2024-05-21 16:36:50.728757528 +0000
++++ kfpsync	2024-05-22 20:14:38.183167109 +0000
 @@ -44,11 +44,17 @@
  # Maximum files or directories per sync job (-f)
  OPT_FPMAXPARTFILES="2000"
@@ -19,7 +19,17 @@
  # Fpart shared dir (must be shared amongst all workers, -d)
  OPT_FPSHDIR=""
  # Temporary dir (local, used for queue management, -t)
-@@ -165,7 +171,7 @@
+@@ -112,6 +118,9 @@
+ SYNCHRONIZATION OPTIONS:
+   -m tool     external copy tool to use: $(tool_print_supported)
+               (default: 'rsync')
++  -k img,pvc  Enable k8s worker by providing the container image and pvc name.
++              pvc is the value of persistentVolumeClaim.claimNam of the k8s job spec
++              (Example: -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc)
+   -f y        transfer at most <y> files or directories per sync job
+   -s z        transfer at most <z> bytes per sync job
+   -E          work on a per-directory basis ('rsync' tool only)
+@@ -165,7 +174,7 @@
  # $1 = level (0 = quiet, 1 = verbose, >=2 more verbose)
  # $2 = message to log
  echo_log () {
@@ -28,7 +38,7 @@
      is_num "$1" && [ ${OPT_VERBOSE} -ge $1 ] && [ -n "$2" ] && \
          echo "${_ts} $2"
      [ -n "$2" ] && \
-@@ -214,18 +220,18 @@
+@@ -214,18 +223,18 @@
  # Chek if a tool is supported
  # $1 = tool name
  tool_is_supported () {
@@ -50,7 +60,7 @@
  }
  
  # Check if a tool supports directory-only mode
-@@ -318,13 +324,39 @@
+@@ -318,13 +327,39 @@
  tool_init_fpart_job_command () {
      case "$1" in
      "rsync")
@@ -91,20 +101,14 @@
      "cpio")
          # XXX Warning: -0 and --quiet are non-standard
          # (not supported on Solaris), see:
-@@ -373,9 +405,26 @@
+@@ -373,9 +408,20 @@
  parse_opts () {
      local opt OPTARG OPTIND
  
 -    while getopts "m:n:f:s:Ew:d:t:M:plr:Ra:D:o:O:Svh" opt
-+    while getopts "m:n:f:s:EKw:k:d:t:M:plr:Ra:D:o:O:Svh" opt
++    while getopts "m:n:f:s:Ew:k:d:t:M:plr:Ra:D:o:O:Svh" opt
      do
          case "${opt}" in
-+        "K")
-+            # Add options for k8s support
-+            OPT_K8S_ENABLED="True"
-+            OPT_K8S_IMAGE="fra.ocir.io/fsssolutions/rclone-rsync:latest"
-+            OPT_K8S_PVC="lustre-pvc"
-+            ;;
 +        "k")
 +            # k8s option with values
 +            k8s_details=${OPTARG}
@@ -119,7 +123,7 @@
          "m")
              if tool_is_supported "${OPTARG}"
              then
-@@ -510,6 +559,20 @@
+@@ -510,6 +556,20 @@
      done
      shift $((${OPTIND} - 1))
  
@@ -140,7 +144,7 @@
      # Validate OPT_FPSHDIR (shared directory)
      if [ -z "${OPT_WRKRS}" ]
      then
-@@ -653,7 +716,7 @@
+@@ -653,7 +713,7 @@
              _WORK_NUM="$((${_WORK_NUM} + 1))"
          # If not, put its worker to the free list
          else
@@ -149,7 +153,7 @@
              if [ -n "${OPT_WRKRS}" ]
              then
                  WORK_FREEWORKERS="${WORK_FREEWORKERS} $(echo ${_JOB} | cut -d ':' -f 3)"
-@@ -751,23 +814,27 @@
+@@ -751,23 +811,27 @@
          [ ${OPT_VERBOSE} -ge 1 ] && siginfo_handler
          # Exit program
          end_die
@@ -188,7 +192,7 @@
  }
  
  # Handle ^T: print info about queue status
-@@ -794,6 +861,7 @@
+@@ -794,6 +858,7 @@
          _run_time_remaining="$(( (${_run_elapsed_time} * ${_jobs_remaining}) / ${_run_jobs_done} ))"
      fi
  
@@ -196,7 +200,7 @@
      echo "${_ts} <===   Parts done: ${_jobs_done}/${_jobs_total} (${_jobs_percent}%), remaining: ${_jobs_remaining}"
      echo "${_ts} <=== Time elapsed: ${_run_elapsed_time}s, remaining: ~${_run_time_remaining}s (~${_run_time_per_job}s/job)"
  }
-@@ -822,12 +890,72 @@
+@@ -822,12 +887,72 @@
      fi
  }
  
@@ -270,7 +274,7 @@
      # Ignore SIGINFO from within loop, handled by the parent (master) process
      trap '' 29
  
-@@ -844,13 +972,20 @@
+@@ -844,13 +969,20 @@
              then
                  if [ -z "${OPT_WRKRS}" ]
                  then
@@ -295,7 +299,7 @@
                      "${SSH_BIN}" "${_NEXT_HOST}" '/bin/sh -s' \
                          < "${JOBS_WORKDIR}/${_NEXT}" &
                      work_list_push "$!:${_NEXT}:${_NEXT_HOST}"
-@@ -863,12 +998,14 @@
+@@ -863,12 +995,14 @@
  
      if [ "${_NEXT}" = "fp_done" ]
      then
@@ -313,7 +317,7 @@
  
      # Set the 'sl_done' (sync done) flag to let the master process go
      job_queue_sl_done
-@@ -1012,6 +1149,7 @@
+@@ -1012,6 +1146,7 @@
  ## End of options' post-processing section, let's start for real now !
  
  SIGINT_COUNT="0"    # ^C counter
@@ -321,7 +325,7 @@
  
  WORK_NUM=0          # Current number of running processes
  WORK_LIST=""        # Work PID:PART:WORKER list
-@@ -1123,7 +1261,7 @@
+@@ -1123,7 +1258,7 @@
  # presence (this also allows checking SSH connectivity to each declared host)
  if [ -n "${OPT_WRKRS}" ]
  then
@@ -330,7 +334,7 @@
  
      _FIRST_HOST="$(echo ${OPT_WRKRS} | awk '{print $1}')"
      for _host in ${OPT_WRKRS}
-@@ -1164,7 +1302,7 @@
+@@ -1164,7 +1299,7 @@
          "${SSH_BIN}" "${_host}" "/bin/sh -c '[ -x \"${TOOL_BIN}\" ]'" || \
              end_die "Tool ${OPT_TOOL_NAME} not useable on target ${_host}: ${TOOL_BIN} not found"
  
@@ -339,7 +343,7 @@
      done
  
      # Remove witness file
-@@ -1190,21 +1328,21 @@
+@@ -1190,21 +1325,21 @@
  work_list_free_workers_init
  
  # Let's rock !
@@ -372,7 +376,7 @@
  fi
  
  # Record run information
-@@ -1220,8 +1358,9 @@
+@@ -1220,8 +1355,9 @@
      # Set SIGINT and SIGINFO traps and start job_queue_loop
      trap 'sigint_handler' 2
      trap 'siginfo_handler' 29
@@ -383,7 +387,7 @@
  fi
  
  # When not resuming a previous run, start fpart
-@@ -1240,14 +1379,26 @@
+@@ -1240,14 +1376,26 @@
          IFS="|"
  
          echo_log "1" "===> Analyzing filesystem..."
@@ -413,7 +417,7 @@
              tee -a "${FPART_LOGFILE}"
      )
  
-@@ -1281,10 +1432,12 @@
+@@ -1281,10 +1429,12 @@
      _report_subj="Fpsync run ${FPART_RUNID}"
  fi
  _report_logs=$(find "${FPART_LOGDIR}/" -name "*.stderr" ! -size 0)

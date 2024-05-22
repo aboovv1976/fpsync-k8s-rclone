@@ -118,6 +118,9 @@ COMMON OPTIONS:
 SYNCHRONIZATION OPTIONS:
   -m tool     external copy tool to use: $(tool_print_supported)
               (default: 'rsync')
+  -k img,pvc  Enable k8s worker by providing the container image and pvc name.
+              pvc is the value of persistentVolumeClaim.claimNam of the k8s job spec
+              (Example: -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc)
   -f y        transfer at most <y> files or directories per sync job
   -s z        transfer at most <z> bytes per sync job
   -E          work on a per-directory basis ('rsync' tool only)
@@ -405,15 +408,9 @@ tool_uses_forbidden_option () {
 parse_opts () {
     local opt OPTARG OPTIND
 
-    while getopts "m:n:f:s:EKw:k:d:t:M:plr:Ra:D:o:O:Svh" opt
+    while getopts "m:n:f:s:Ew:k:d:t:M:plr:Ra:D:o:O:Svh" opt
     do
         case "${opt}" in
-        "K")
-            # Add options for k8s support
-            OPT_K8S_ENABLED="True"
-            OPT_K8S_IMAGE="fra.ocir.io/fsssolutions/rclone-rsync:latest"
-            OPT_K8S_PVC="lustre-pvc"
-            ;;
         "k")
             # k8s option with values
             k8s_details=${OPTARG}
