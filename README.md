@@ -10,7 +10,7 @@ To scale out data transfers, especially to storage systems that are relative hig
 
 [fpart](http://www.fpart.org/#fpsync) is a tool that can be used to partition the directory structure. It can call tools such rsync, tar and rclone with a file system partition to run in parallel, and independent of each other. 
 
-## fpsync - Running transfer tools in parallel
+## fpsync - Data transfer in parallel
 
 [fpsync](http://www.fpart.org/fpsync/) is a wrapper script that uses fpart to runs the transfer tools (rsync, rclone) in parallel. The fpsync is run from the fpsync operator host. fpsync also has options to use seperate worker nodes. The modified fpsync supports rclone and also Kubernetes pods. 
 
