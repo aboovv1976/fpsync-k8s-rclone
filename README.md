@@ -12,11 +12,11 @@ To scale out data transfers, especially to storage systems that are relative hig
 
 ## fpsync - Running transfer tools in parallel
 
-[fpsync](http://www.fpart.org/fpsync/) is a wrapper script that wraps fpart to runs the transfer tools (rsync, rclone) in parallel. The fpsync is run from the fpsync operator host. 
+[fpsync](http://www.fpart.org/fpsync/) is a wrapper script that uses fpart to runs the transfer tools (rsync, rclone) in parallel. The fpsync is run from the fpsync operator host. fpsync also has options to use seperate worker nodes. The modified fpsync supports rclone and also Kubernetes pods. 
 
  ## rclone - Data transfer to Object Storage
  
- Use [rclone](https://rclone.org/) tool to send files from Lustre to object storage. It is a versatile tool used to migrate data across storage systems of various types. It supports multiple threads and multiple streams concurrently. It has POSIX file system interface and supports various back-end storage types including file systems and object storage. Rclone has support for native OCI Object Storage APIs. 
+Use [rclone](https://rclone.org/) tool to send files from Lustre to object storage. It is a versatile tool used to migrate data across storage systems of various types. It supports multiple threads and multiple streams concurrently. It has POSIX file system interface and supports various back-end storage types including file systems and object storage. Rclone has support for native OCI Object Storage APIs. rclone has specific options for [OCI object storage](https://rclone.org/oracleobjectstorage/). 
 
  ## rsync - Data Transfer to another POSIX complaint file system
 
@@ -24,7 +24,7 @@ To scale out data transfers, especially to storage systems that are relative hig
 
 # Tool installation
 
-The rclone or rsync tool is run from the Kubernetes pods and all the required tools are installed on the container image. However, Since fpsync operator host copies the rclone configuration to the pods, rclone should be installed and configured on the fpsync operator host.  
+The rclone or rsync tool is run from the Kubernetes pods (or worker nodes if using worker nodes). All the required tools are installed on the container image. However, Since fpsync operator host copies the rclone configuration to the pods, rclone should be installed and configured on the fpsync operator host.  The source file system should also be mounted on the operator host. 
 
 ## rclone
 
@@ -35,7 +35,7 @@ If transfer to object storage is needed, install [rclone](https://rclone.org/ins
 # curl https://rclone.org/install.sh | bash
 ```
 
-Configure API and CLI access from the node using [Instance principals](https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/callingservicesfrominstances.htm). The following is a liberal permission given to rclone running on the OKe nodes. The policy gives permission to all the hosts in dynamic group rclone-oke to manage object storage in compartment storage
+Configure API and CLI access from the node using [Instance principals](https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/callingservicesfrominstances.htm). The following is a liberal permission given to rclone running on the OKE nodes. The policy gives permission to all the hosts in dynamic group rclone-oke to manage object storage in storage compartment.
 
 ```
 allow dynamic-group rclone-oke to manage object-family in compartment storage
@@ -45,7 +45,7 @@ allow dynamic-group rclone-oke to manage object-family in compartment storage
 
 When the movers are in OKE pods, kubectl installation and its configuration should be done on the fpsync operator host. 
 
-Install [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/#install-kubectl-binary-with-curl-on-linux) if rclone or rsync to be run as Kubernetes pods.
+Install [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/#install-kubectl-binary-with-curl-on-linux) to manage Kubernetes jobs.
 
 ```
 # curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
@@ -63,7 +63,7 @@ allow dynamic-group fpsync-host to manage cluster-family in compartment storage
 
 ## modified fpsync (Ubuntu)
 
-The fpsync is required to run rclone or rsync in parallel to scale out the data transfer. The fpsync that comes with the fpart package doesn't support rclone or Kubernetes pods. The patch in this github project adds that the support for these tools. 
+The fpsync is required to run rclone or rsync in parallel to scale out the data transfer. The fpsync that comes with the fpart package doesn't support rclone or Kubernetes pods. The patch adds suppport for these tools. 
 
 ```
 # apt-get install fpart
@@ -75,7 +75,7 @@ The fpsync is required to run rclone or rsync in parallel to scale out the data 
 
 ## Container image 
 
-The docker image build specification is available in this github project. This can be used to build the container image. Once image is build, it should be uploaded to a registry that can be accessed from OKE cluster. 
+The docker image build specification in is available in rclone-rsync-image can be used to build the container image. Once image is build, it should be uploaded to a registry that can be accessed from OKE cluster. 
 
 ```
 # rclone-rsync-image
@@ -101,12 +101,12 @@ Mount the source file system on the fpart operator host and create a shared dire
 # PART_SIZE=512 && ./k-fpsync -v -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc  -m rclone -d /data/fpsync  -f $PART_SIZE -n 2 -o "--oos-no-check-bucket --oos-upload-cutoff 10Mi --multi-thread-cutoff 10Mi --no-traverse --no-check-dest --multi-thread-streams 64 --transfers $PART_SIZE  --oos-upload-concurrency 8 --oos-disable-checksum  --oos-leave-parts-on-error" /data/src/ rclone:rclone-2
 ```
 
-The above command will transfer */data/src* to object storage bucket *rclone-2*. It will start 2 pods at a time to transfer the file system partition created by fpart. The logs for the run are kept in /data/fpsync/{Run-Id}/log directory. 
+The above command will transfer */data/src* to object storage bucket *rclone-2*. It will start 2 pods at a time to transfer the file system partition created by fpart. 
 
 Similarly, the rsync can be used to transfer files from one directory to another directory. 
 ```
 # PART_SIZE=512 && ./kfpsync -v -k -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc  -d /data/fpsync  -f $PART_SIZE -n 2 /data/src/ /data/dst
 ```
 
-The sample outputs are provided in the sample directory. 
+The logs for the run are kept in /data/fpsync/{Run-Id}/log directory. The sample outputs are provided in the *sample* directory. 
 
