@@ -1,4 +1,4 @@
-# Data Transfer between file systems and Object Storage using OKE
+# Data Transfer between file systems and Object Storage using OKE pods
 
 This project demonstrate how multiple Kubernetes pods can be used to scale out data transfer between file systems and object storage. 
 
