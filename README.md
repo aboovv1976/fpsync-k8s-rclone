@@ -14,8 +14,8 @@
 
 If transfer to object storage is needed, install [rclone](https://rclone.org/install/) and [oci-cli](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm#InstallingCLI__linux_and_unix). Configure [rclone](https://docs.oracle.com/en/solutions/move-data-to-cloud-storage-using-rclone/configure-rclone-object-storage.html#GUID-CFC20E9F-0576-4CF2-97A6-C19D85081F2E) for OCI object storage.
 
-> \# bash -c "\$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
-> \#  curl https://rclone.org/install.sh | bash
+> \# bash -c "\$\(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh\)"
+> \# curl https://rclone.org/install.sh | bash
 
 Configure API and CLI access from the Compute instance using [Instance principals](https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/callingservicesfrominstances.htm). The following is a very liberal permission given to rclone running on the instance. The policy gives permission to all the instances in dynamic group rclone-hosts to manage object storage in compartment storage
 
