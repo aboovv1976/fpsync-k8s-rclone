@@ -103,7 +103,7 @@ Mount the source file system on the fpart operator host and create a shared dire
 
 The above command will transfer */data/src* to object storage bucket *rclone-2*. It will start 2 pods at a time to transfer the file system partition created by fpart. 
 
-Similarly, the rsync can be used to transfer files from one directory to another directory. 
+Similarly, the rsync can be used to transfer files from one file system to another file system. The k-fpsync accepts the PVC only for source file system. But,it is a small modification to add the target volume specifications.  
 ```
 # PART_SIZE=512 && ./kfpsync -v -k -k fra.ocir.io/fsssolutions/rclone-rsync:latest,lustre-pvc  -d /data/fpsync  -f $PART_SIZE -n 2 /data/src/ /data/dst
 ```
