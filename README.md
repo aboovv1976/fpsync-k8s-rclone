@@ -88,7 +88,7 @@ The docker image build specification in is available in rclone-rsync-image can b
 A copy of the image is maintained in *fra.ocir.io/fsssolutions/rclone-rsync:latest*
 
 
-The *sample* directory contains some examples and k8s job spec file. 
+The *sample* directory contains some examples output files. 
 
 # Running k-fpsync
 
